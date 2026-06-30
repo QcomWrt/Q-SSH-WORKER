@@ -1,6 +1,9 @@
 # Q-SSH-WORKER
 
-🇺🇸 **English:** [README.md](README.md)
+> 🌐 **Dokumentasi**
+>
+> - 🇺🇸 [English](README.md)
+> - 🇮🇩 Bahasa Indonesia (Saat Ini)
 
 Q-SSH-WORKER adalah SSH Client dan transport engine modular yang ditulis sepenuhnya menggunakan bahasa Go.
 
