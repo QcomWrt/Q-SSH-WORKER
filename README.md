@@ -1,66 +1,68 @@
 # Q-SSH-WORKER
 
-Q-SSH-WORKER adalah SSH Client dan transport engine modular yang ditulis sepenuhnya menggunakan bahasa Go.
+🇮🇩 **Bahasa Indonesia:** [README-ID.md](README-ID.md)
 
-Proyek ini dikembangkan sebagai pengganti modern berbagai utilitas SSH yang selama ini umum digunakan pada lingkungan tunneling, seperti **http.py**, **sshpass**, **corkscrew**, serta berbagai shell script dan helper binary lainnya.
+Q-SSH-WORKER is a modular SSH client and transport engine written entirely in Go.
 
-Alih-alih menggabungkan banyak aplikasi berbeda, Q-SSH-WORKER mengintegrasikan seluruh proses mulai dari pembuatan koneksi jaringan, modifikasi transport, autentikasi SSH, hingga penyediaan SOCKS5 Proxy ke dalam satu aplikasi yang ringan, modular, dan mudah dikembangkan.
+The project is designed as a modern replacement for various standalone SSH tunneling utilities commonly used in tunneling environments, such as **http.py**, **sshpass**, **corkscrew**, shell scripts, and other helper binaries.
 
-Q-SSH-WORKER merupakan SSH Engine utama yang digunakan oleh proyek **Q-LOAD**, namun tetap dapat dijalankan sebagai aplikasi mandiri (standalone).
+Instead of combining multiple external applications, Q-SSH-WORKER integrates the entire workflow—from network connection, transport processing, SSH authentication, to providing a local SOCKS5 proxy—into a single lightweight, modular, and extensible application.
+
+Q-SSH-WORKER serves as the primary SSH engine for the **Q-LOAD** ecosystem while also being fully usable as a standalone application.
 
 ---
 
-# Mengapa Q-SSH-WORKER?
+# Why Q-SSH-WORKER?
 
-Pada umumnya, SSH tunneling membutuhkan beberapa aplikasi sekaligus, misalnya:
+Traditional SSH tunneling solutions usually depend on several external programs, including:
 
 * sshpass
 * http.py
 * corkscrew
-* shell script
-* helper binary lainnya
+* shell scripts
+* additional helper binaries
 
-Kombinasi tersebut cukup sulit dipelihara karena setiap aplikasi memiliki konfigurasi, dependensi, dan perilaku yang berbeda.
+Managing multiple external tools makes deployment and maintenance more complicated.
 
-Q-SSH-WORKER menghilangkan seluruh ketergantungan tersebut dengan mengimplementasikan seluruh fungsinya secara native menggunakan Go.
+Q-SSH-WORKER removes these dependencies by implementing everything natively in Go.
 
-Seluruh fitur seperti:
+Features such as:
 
 * HTTP CONNECT
 * HTTP Payload Injection
 * TLS
 * WebSocket
 * SOCKS5
-* Auto Reconnect
+* Automatic Reconnect
 * DNS Resolver
 
-diimplementasikan langsung di dalam aplikasi tanpa memerlukan program eksternal.
+are implemented directly inside the application.
 
-Dengan demikian Q-SSH-WORKER **tidak lagi membutuhkan aplikasi seperti http.py maupun corkscrew** untuk membangun SSH Tunnel melalui proxy ataupun payload HTTP.
-
----
-
-# Tujuan Proyek
-
-Q-SSH-WORKER dirancang dengan tujuan:
-
-* Membangun SSH Client modern menggunakan Go.
-* Menggantikan utilitas seperti http.py, sshpass, corkscrew, dan helper serupa.
-* Mendukung berbagai metode transport secara modular.
-* Mendukung HTTP CONNECT Proxy.
-* Mendukung HTTP Payload Injection.
-* Mendukung TLS.
-* Mendukung WebSocket.
-* Mendukung gRPC pada pengembangan berikutnya.
-* Menyediakan SOCKS5 Proxy lokal.
-* Mendukung Auto Reconnect.
-* Mudah diintegrasikan dengan Q-LOAD.
-* Cross Platform.
-* Minim dependensi eksternal.
+As a result, **Q-SSH-WORKER no longer requires external utilities such as http.py or corkscrew** to establish SSH tunnels through HTTP proxies or custom payloads.
 
 ---
 
-# Arsitektur
+# Project Goals
+
+Q-SSH-WORKER is designed with the following goals:
+
+* Build a modern SSH client in Go.
+* Replace utilities such as http.py, sshpass, corkscrew, and similar helper programs.
+* Provide a modular transport pipeline.
+* Support HTTP CONNECT proxy.
+* Support HTTP payload injection.
+* Support TLS.
+* Support WebSocket.
+* Support gRPC in future releases.
+* Provide a local SOCKS5 proxy.
+* Support automatic reconnect.
+* Integrate seamlessly with Q-LOAD.
+* Cross-platform.
+* Minimal external dependencies.
+
+---
+
+# Architecture
 
 ```text
                 Configuration
@@ -84,18 +86,18 @@ Q-SSH-WORKER dirancang dengan tujuan:
                     Q-LOAD
 ```
 
-Setiap layer memiliki tanggung jawab masing-masing sehingga dapat dikembangkan secara independen tanpa mempengaruhi layer lainnya.
+Each layer has a single responsibility, allowing independent development and maintenance without affecting the others.
 
 ---
 
-# Struktur Direktori
+# Directory Structure
 
 ```text
 config/
-    Loader dan parser konfigurasi.
+    Configuration loader and parser.
 
 network/
-    Layer pembuat koneksi jaringan.
+    Network connection layer.
     - TCP
     - WebSocket
     - gRPC (planned)
@@ -103,25 +105,25 @@ network/
     - Dialer
 
 transport/
-    Layer modifikasi koneksi.
+    Connection modifier layer.
     - HTTP
     - Payload
     - Proxy
     - TLS
 
 ssh/
-    SSH Client.
+    SSH client implementation.
     - Authentication
     - Session
     - Client
 
 socks/
-    SOCKS5 Server.
+    SOCKS5 server.
 
 worker/
-    Worker Manager.
+    Worker manager.
     Reconnect.
-    Health Check.
+    Health monitoring.
     Statistics.
 
 logger/
@@ -131,30 +133,30 @@ internal/
     Shared utilities.
 
 examples/
-    Contoh konfigurasi.
+    Configuration examples.
 ```
 
 ---
 
-# Filosofi Desain
+# Design Philosophy
 
-Q-SSH-WORKER menggunakan prinsip **Single Responsibility**.
+Q-SSH-WORKER follows the **Single Responsibility Principle**.
 
-Setiap package hanya memiliki satu tanggung jawab.
+Each package is responsible for only one task.
 
-* **Network** bertugas membuat koneksi dasar.
-* **Transport** memodifikasi koneksi tersebut.
-* **SSH** melakukan autentikasi dan membuat SSH Session.
-* **SOCKS5** menyediakan endpoint lokal.
-* **Worker** mengelola reconnect, monitoring, dan statistik.
+* **Network** creates the underlying connection.
+* **Transport** modifies the connection.
+* **SSH** performs authentication and establishes SSH sessions.
+* **SOCKS5** exposes the local proxy interface.
+* **Worker** manages reconnect, monitoring, and statistics.
 
-Dengan pendekatan ini, penambahan fitur baru seperti WebSocket, gRPC, ataupun transport lainnya tidak memerlukan perubahan besar pada implementasi SSH.
+This modular architecture allows new transports such as WebSocket or gRPC to be added without changing the SSH implementation.
 
 ---
 
-# Alur Kerja
+# Workflow
 
-Secara sederhana Q-SSH-WORKER bekerja seperti berikut:
+A typical TCP connection works as follows:
 
 ```text
 TCP Connection
@@ -175,7 +177,7 @@ SSH Handshake
 SOCKS5 Server
 ```
 
-Untuk koneksi WebSocket:
+For WebSocket:
 
 ```text
 WebSocket
@@ -187,25 +189,25 @@ TLS (optional)
 SSH
 ```
 
-Untuk pengembangan berikutnya:
+Future gRPC support:
 
 ```text
 gRPC
-   │
-   ▼
+  │
+  ▼
 TLS
-   │
-   ▼
+  │
+  ▼
 SSH
 ```
 
 ---
 
-# Konfigurasi
+# Configuration
 
-Konfigurasi menggunakan format JSON.
+Configuration is stored in JSON format.
 
-Contoh:
+Example:
 
 ```json
 {
@@ -244,12 +246,12 @@ Contoh:
 
 ---
 
-# Fitur
+# Features
 
-Fitur yang tersedia maupun sedang dikembangkan:
+Current and planned features include:
 
 * Native SSH Password Authentication
-* Native Public Key Authentication
+* Native SSH Public Key Authentication
 * Native Keyboard Interactive Authentication
 * Native HTTP CONNECT Proxy
 * Native HTTP Payload Injection
@@ -263,7 +265,7 @@ Fitur yang tersedia maupun sedang dikembangkan:
 * Lightweight Memory Usage
 * Modular Architecture
 * Cross Platform
-* Tidak membutuhkan helper binary eksternal
+* No external helper binaries required
 
 ---
 
@@ -271,9 +273,9 @@ Fitur yang tersedia maupun sedang dikembangkan:
 
 ## Core
 
-* [x] Redesain arsitektur proyek
-* [ ] Loader konfigurasi
-* [ ] Worker Manager
+* [x] Project architecture redesign
+* [ ] Configuration loader
+* [ ] Worker manager
 
 ## Network
 
@@ -297,14 +299,14 @@ Fitur yang tersedia maupun sedang dikembangkan:
 
 * [ ] SOCKS5 Server
 
-## Integrasi
+## Integration
 
-* [ ] Integrasi dengan Q-LOAD
+* [ ] Q-LOAD integration
 
 ---
 
-# Lisensi
+# License
 
-Q-SSH-WORKER dirilis menggunakan lisensi MIT.
+Q-SSH-WORKER is released under the MIT License.
 
-Silakan digunakan, dimodifikasi, maupun didistribusikan sesuai ketentuan lisensi MIT.
+You are free to use, modify, and distribute this project under the terms of the MIT License.
