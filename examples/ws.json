@@ -1,0 +1,26 @@
+{
+  "listen": {
+    "host": "127.0.0.1",
+    "port": 1080
+  },
+
+  "ssh": {
+    "host": "server.pxstore.web.id",
+    "port": 80,
+    "username": "azy",
+    "password": "ganteng"
+  },
+
+  "transport": {
+    "ws": true,
+    "tls": false,
+
+    "host": "bug.com",
+    "path": "/ws",
+    "sni": ""
+  },
+
+  "payload": {
+    "enable": false
+  }
+}

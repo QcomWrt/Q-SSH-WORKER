@@ -7,15 +7,12 @@
   "ssh": {
     "host": "server.pxstore.web.id",
     "port": 22,
-    "username": "azy",
-    "password": "ganteng"
-  },
-
-  "network": {
-    "type": "tcp"
+    "username": "username",
+    "password": "password"
   },
 
   "transport": {
+    "ws": false,
     "tls": false,
 
     "host": "",
@@ -24,6 +21,16 @@
   },
 
   "payload": {
-    "enable": false
+    "enable": false,
+
+    "proxy_host": "",
+    "proxy_port": 0,
+
+    "request": "",
+    "expect": [
+      "200",
+      "101",
+      "Connection established"
+    ]
   }
 }

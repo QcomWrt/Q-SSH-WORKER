@@ -12,12 +12,12 @@
   },
 
   "transport": {
-    "ws": false,
+    "ws": true,
     "tls": true,
 
-    "host": "",
-    "path": "/",
-    "sni": ""
+    "host": "bug.com",
+    "path": "/ws",
+    "sni": "bug.com"
   },
 
   "payload": {

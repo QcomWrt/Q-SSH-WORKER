@@ -17,7 +17,7 @@
 
     "host": "",
     "path": "/",
-    "sni": ""
+    "sni": "bug.com"
   },
 
   "payload": {
