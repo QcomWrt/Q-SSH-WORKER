@@ -1,30 +1,42 @@
 package transport
 
 import (
-	"fmt"
+	"net"
 
 	"github.com/QcomWrt/Q-SSH-WORKER/config"
-	"github.com/QcomWrt/Q-SSH-WORKER/network/dialer"
-	"github.com/QcomWrt/Q-SSH-WORKER/network/tcp"
-	// "github.com/QcomWrt/Q-SSH-WORKER/transport/http"
-	// "github.com/QcomWrt/Q-SSH-WORKER/transport/tls"
-	// "github.com/QcomWrt/Q-SSH-WORKER/transport/proxy"
+
+	"github.com/QcomWrt/Q-SSH-WORKER/transport/payload"
+	"github.com/QcomWrt/Q-SSH-WORKER/transport/proxy"
+	"github.com/QcomWrt/Q-SSH-WORKER/transport/tls"
 )
 
-func New(cfg *config.Config) (dialer.Dialer, error) {
+func Wrap(cfg *config.Config, conn net.Conn) (net.Conn, error) {
 
-	switch cfg.Transport.Type {
+	var err error
 
-	case "direct":
-		return direct.New(cfg), nil
-
-	// case "tls":
-	//     return tls.New(cfg), nil
-
-	// case "ws":
-	//     return ws.New(cfg), nil
-
-	default:
-		return nil, fmt.Errorf("unsupported transport: %s", cfg.Transport.Type)
+	// Proxy
+	if cfg.Payload.Enable && cfg.Payload.ProxyHost != "" {
+		conn, err = proxy.Connect(cfg, conn)
+		if err != nil {
+			return nil, err
+		}
 	}
+
+	// Payload
+	if cfg.Payload.Enable {
+		conn, err = payload.Inject(cfg, conn)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// TLS
+	if cfg.Transport.TLS {
+		conn, err = tls.Wrap(cfg, conn)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return conn, nil
 }
