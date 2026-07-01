@@ -1,6 +1,9 @@
 package config
 
-type ListenConfig struct {
-	Host string `json:"host"`
-	Port int    `json:"port"`
+type Worker struct {
+	MaxRetry int `json:"max_retry"`
+
+	RetryDelay int `json:"retry_delay"`
+
+	HealthCheck bool `json:"health_check"`
 }

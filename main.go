@@ -10,9 +10,8 @@ import (
 	"time"
 
 	"github.com/QcomWrt/Q-SSH-WORKER/config"
-	// "github.com/QcomWrt/Q-SSH-WORKER/internal"
-	"github.com/QcomWrt/Q-SSH-WORKER/transport/dialer"
-	"github.com/QcomWrt/Q-SSH-WORKER/transport"
+	"github.com/QcomWrt/Q-SSH-WORKER/network"
+	"github.com/QcomWrt/Q-SSH-WORKER/network/dialer"
 	"github.com/QcomWrt/Q-SSH-WORKER/version"
 )
 
@@ -109,7 +108,7 @@ func dialTest(file string) {
 		log.Fatalf("Config Error: %v", err)
 	}
 
-	d, err := transport.New(cfg)
+	n, err := network.New(cfg)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -117,16 +116,16 @@ func dialTest(file string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	conn, err := d.Dial(ctx)
+	conn, err := n.Dial(ctx)
 	if err != nil {
 		log.Fatalf("Dial Error: %v", err)
 	}
 	defer conn.Close()
 
-	fmt.Println("TCP Connected")
-	fmt.Printf("Transport : %s\n", cfg.Transport.Type)
-	fmt.Printf("Remote    : %s\n", conn.RemoteAddr())
-	fmt.Printf("Local     : %s\n", conn.LocalAddr())
+	fmt.Println("Network Connected")
+	fmt.Printf("Network : %s\n", cfg.Network.Type)
+	fmt.Printf("Remote  : %s\n", conn.RemoteAddr())
+	fmt.Printf("Local   : %s\n", conn.LocalAddr())
 }
 
 func usage() {

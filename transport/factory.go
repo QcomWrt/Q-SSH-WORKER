@@ -4,11 +4,11 @@ import (
 	"fmt"
 
 	"github.com/QcomWrt/Q-SSH-WORKER/config"
-	"github.com/QcomWrt/Q-SSH-WORKER/transport/dialer"
-	"github.com/QcomWrt/Q-SSH-WORKER/transport/direct"
+	"github.com/QcomWrt/Q-SSH-WORKER/network/dialer"
+	"github.com/QcomWrt/Q-SSH-WORKER/network/tcp"
 	// "github.com/QcomWrt/Q-SSH-WORKER/transport/http"
 	// "github.com/QcomWrt/Q-SSH-WORKER/transport/tls"
-	// "github.com/QcomWrt/Q-SSH-WORKER/transport/ws"
+	// "github.com/QcomWrt/Q-SSH-WORKER/transport/proxy"
 )
 
 func New(cfg *config.Config) (dialer.Dialer, error) {

@@ -1,19 +1,11 @@
 package config
 
-type TransportConfig struct {
-	Type string `json:"type"`
+type Payload struct {
+	Enable bool `json:"enable"`
 
-	TLS  bool   `json:"tls"`
-	SNI  string `json:"sni"`
+	ProxyHost string `json:"proxy_host"`
+	ProxyPort int    `json:"proxy_port"`
 
-	Host string `json:"host"`
-	Path string `json:"path"`
-}
-
-type PayloadConfig struct {
-	Enable    bool     `json:"enable"`
-	ProxyHost string   `json:"proxy_host"`
-	ProxyPort int      `json:"proxy_port"`
-	Request   string   `json:"request"`
-	Expect    []string `json:"expect"`
+	Request string   `json:"request"`
+	Expect  []string `json:"expect"`
 }

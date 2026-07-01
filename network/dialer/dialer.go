@@ -1,10 +1,14 @@
 package dialer
 
 import (
-	"context"
 	"net"
+	"time"
 )
 
-type Dialer interface {
-	Dial(ctx context.Context) (net.Conn, error)
+func New(timeout time.Duration) *net.Dialer {
+
+	return &net.Dialer{
+		Timeout:   timeout,
+		KeepAlive: 30 * time.Second,
+	}
 }

@@ -1,33 +1,28 @@
-package direct
+package tcp
 
 import (
 	"context"
 	"net"
 
 	"github.com/QcomWrt/Q-SSH-WORKER/config"
-	"github.com/QcomWrt/Q-SSH-WORKER/transport/dialer"
+	"github.com/QcomWrt/Q-SSH-WORKER/internal"
+	"github.com/QcomWrt/Q-SSH-WORKER/network/dialer"
 )
 
-type Direct struct {
+type TCP struct {
 	cfg *config.Config
 }
 
-func New(cfg *config.Config) *Direct {
-	return &Direct{
+func New(cfg *config.Config) *TCP {
+	return &TCP{
 		cfg: cfg,
 	}
 }
 
-func (d *Direct) Dial(ctx context.Context) (net.Conn, error) {
+func (t *TCP) Dial(ctx context.Context) (net.Conn, error) {
 
-	ips, err := dialer.Resolve(d.cfg.SSH.Host)
-	if err != nil {
-		return nil, err
-	}
-
-	return dialer.DialFirst(
+	return dialer.DialTCP(
 		ctx,
-		ips,
-		d.cfg.SSH.Port,
+		internal.Address(t.cfg),
 	)
 }

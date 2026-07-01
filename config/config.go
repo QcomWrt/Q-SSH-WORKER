@@ -1,8 +1,10 @@
 package config
 
 type Config struct {
-	Listen    ListenConfig    `json:"listen"`
-	SSH       SSHConfig       `json:"ssh"`
-	Transport TransportConfig `json:"transport"`
-	Payload   PayloadConfig   `json:"payload"`
+	Listen    Listen    `json:"listen"`
+	SSH       SSH       `json:"ssh"`
+	Network   Network   `json:"network"`
+	Transport Transport `json:"transport"`
+	Payload   Payload   `json:"payload"`
+	Worker    Worker    `json:"worker"`
 }
