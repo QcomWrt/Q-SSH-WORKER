@@ -5,7 +5,6 @@ import (
 	"net"
 
 	"github.com/QcomWrt/Q-SSH-WORKER/config"
-	"github.com/QcomWrt/Q-SSH-WORKER/internal"
 	"github.com/QcomWrt/Q-SSH-WORKER/network/dialer"
 )
 
@@ -23,6 +22,6 @@ func (t *TCP) Dial(ctx context.Context) (net.Conn, error) {
 
 	return dialer.DialTCP(
 		ctx,
-		internal.Address(t.cfg),
+		dialer.Address(t.cfg),
 	)
 }

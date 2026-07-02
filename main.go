@@ -18,28 +18,36 @@ import (
 
 func main() {
 
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run() error {
+
 	if len(os.Args) < 2 {
 		usage()
-		os.Exit(1)
+		return fmt.Errorf("missing command")
 	}
 
 	switch os.Args[1] {
 
 	case "--version":
 		showVersion()
+		return nil
 
 	case "--check":
-		checkConfig(requireConfig())
+		return checkConfig(requireConfig())
 
 	case "--show-endpoint":
-		showEndpoint(requireConfig())
+		return showEndpoint(requireConfig())
 
 	case "--dial":
-		dialTest(requireConfig())
+		return dialTest(requireConfig())
 
 	default:
 		usage()
-		os.Exit(1)
+		return fmt.Errorf("unknown command: %s", os.Args[1])
 	}
 }
 
@@ -66,26 +74,28 @@ func showVersion() {
 	fmt.Printf("Go      : %s\n", runtime.Version())
 }
 
-func checkConfig(file string) {
+func checkConfig(file string) error {
 
 	_, err := config.Load(file)
 	if err != nil {
-		log.Fatalf("Config Error: %v", err)
+		return fmt.Errorf("config error: %w", err)
 	}
 
 	fmt.Println("Config OK")
+
+	return nil
 }
 
-func showEndpoint(file string) {
+func showEndpoint(file string) error {
 
 	cfg, err := config.Load(file)
 	if err != nil {
-		log.Fatalf("Config Error: %v", err)
+		return fmt.Errorf("config error: %w", err)
 	}
 
 	ips, err := dialer.Resolve(cfg.SSH.Host)
 	if err != nil {
-		log.Fatalf("Resolve Error: %v", err)
+		return fmt.Errorf("resolve error: %w", err)
 	}
 
 	out := map[string]interface{}{
@@ -96,43 +106,49 @@ func showEndpoint(file string) {
 
 	data, err := json.MarshalIndent(out, "", "  ")
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	fmt.Println(string(data))
+
+	return nil
 }
 
-func dialTest(file string) {
+func dialTest(file string) error {
 
 	cfg, err := config.Load(file)
 	if err != nil {
-		log.Fatalf("Config Error: %v", err)
+		return fmt.Errorf("config error: %w", err)
 	}
 
 	n, err := network.New(cfg)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		10*time.Second,
+	)
 	defer cancel()
 
 	conn, err := n.Dial(ctx)
 	if err != nil {
-		log.Fatalf("Dial Error: %v", err)
+		return fmt.Errorf("dial error: %w", err)
 	}
+	defer conn.Close()
 
 	conn, err = transport.Wrap(cfg, conn)
 	if err != nil {
-		log.Fatalf("Transport Error: %v", err)
+		return fmt.Errorf("transport error: %w", err)
 	}
-
-	defer conn.Close()
 
 	fmt.Println("Connection Established")
 	fmt.Printf("Network : %s\n", cfg.Network.Type)
 	fmt.Printf("Remote  : %s\n", conn.RemoteAddr())
 	fmt.Printf("Local   : %s\n", conn.LocalAddr())
+
+	return nil
 }
 
 func usage() {
