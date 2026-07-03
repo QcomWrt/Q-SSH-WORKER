@@ -14,6 +14,7 @@ import (
 	"github.com/QcomWrt/Q-SSH-WORKER/network/dialer"
 	"github.com/QcomWrt/Q-SSH-WORKER/transport"
 	"github.com/QcomWrt/Q-SSH-WORKER/version"
+	workerssh "github.com/QcomWrt/Q-SSH-WORKER/ssh"
 )
 
 func main() {
@@ -143,7 +144,17 @@ func dialTest(file string) error {
 		return fmt.Errorf("transport error: %w", err)
 	}
 
-	fmt.Println("Connection Established")
+	client, err := workerssh.Dial(cfg, conn)
+	if err != nil {
+	    return fmt.Errorf("ssh error: %w", err)
+	}
+	defer client.Close()
+
+	// fmt.Println("Connection Established")
+	fmt.Println("TCP Connected")
+	fmt.Println("Transport Connected")
+	fmt.Println("SSH Connected")
+
 	fmt.Printf("Network : %s\n", cfg.Network.Type)
 	fmt.Printf("Remote  : %s\n", conn.RemoteAddr())
 	fmt.Printf("Local   : %s\n", conn.LocalAddr())
