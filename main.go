@@ -1,106 +1,73 @@
 package main
 
 import (
-	"encoding/json"
+	"flag"
 	"fmt"
 	"os"
 	"runtime"
 
 	"github.com/QcomWrt/Q-SSH-WORKER/config"
-	"github.com/QcomWrt/Q-SSH-WORKER/logger" // Tersentralisasi ke logger
-	"github.com/QcomWrt/Q-SSH-WORKER/network/dialer"
-	"github.com/QcomWrt/Q-SSH-WORKER/version"
+	"github.com/QcomWrt/Q-SSH-WORKER/debug"
 	"github.com/QcomWrt/Q-SSH-WORKER/worker"
+	"github.com/QcomWrt/Q-SSH-WORKER/version"
 )
 
 func main() {
-	if err := run(); err != nil {
-		// Menangkap sisa error trakhir tanpa dobel print
-		logger.Error(err)
+	// 1. Deklarasi CLI Flags menggunakan package flag standar
+	var (
+		dialPath    string
+		showVersion bool
+		forceDebug  bool
+	)
+
+	flag.StringVar(&dialPath, "dial", "", "Jalur ke file konfigurasi JSON (contoh: examples/config.json)")
+	flag.BoolVar(&showVersion, "version", false, "Menampilkan informasi versi biner Q-SSH-WORKER")
+	flag.BoolVar(&forceDebug, "debug", false, "Memaksa mengaktifkan mode debug secara manual via CLI")
+	
+	// Parsing argumen yang masuk dari terminal
+	flag.Parse()
+
+	// ======================================================================
+	// 🟢 FITUR 1: HANDLER VERSION (BERSIH DARI TEKS "Error:")
+	// ======================================================================
+	if showVersion {
+		fmt.Printf("Q-SSH-WORKER\n")
+		fmt.Printf("Version : %s\n", version.Version)
+		fmt.Printf("Commit  : %s\n", version.Commit)
+		fmt.Printf("Build   : %s\n", version.BuildDate)
+		fmt.Printf("Go      : %s\n", runtime.Version())
+		os.Exit(0) // Keluar dengan kode sukses (0)
+	}
+
+	// Cek apakah argumen `--dial` kosong
+	if dialPath == "" {
+		fmt.Println("Gunakan perintah: ./q-ssh-worker --dial <file.json>")
+		fmt.Println("Atau ketik: ./q-ssh-worker --help untuk bantuan.")
 		os.Exit(1)
 	}
-}
 
-func run() error {
-	if len(os.Args) < 2 {
-		usage()
-		return fmt.Errorf("missing command")
-	}
-
-	switch os.Args[1] {
-	case "--version":
-		showVersion()
-		return nil
-	case "--check":
-		return checkConfig(requireConfig())
-	case "--show-endpoint":
-		return showEndpoint(requireConfig())
-	case "--dial":
-		cfg, err := config.Load(requireConfig())
-		if err != nil {
-			// Langsung return err mentah agar dihandle logger.Error(err) di main()
-			return err 
-		}
-		return worker.StartWorker(cfg)
-	default:
-		usage()
-		return fmt.Errorf("unknown command: %s", os.Args[1])
-	}
-}
-
-func requireConfig() string {
-	if len(os.Args) < 3 {
-		logger.Error(fmt.Errorf("missing config file"))
-		usage()
+	// 2. Load konfigurasi dari file JSON
+	cfg, err := config.Load(dialPath)
+	if err != nil {
+		fmt.Printf("Gagal memuat konfigurasi: %v\n", err)
 		os.Exit(1)
 	}
-	return os.Args[2]
-}
 
-func showVersion() {
-	// Memanfaatkan global fallback logger.Error untuk print string biasa agar konsisten lewat emit
-	logger.Error(fmt.Errorf("%s", version.Name))
-	logger.Error(fmt.Errorf("Version : %s", version.Version))
-	logger.Error(fmt.Errorf("Commit  : %s", version.Commit))
-	logger.Error(fmt.Errorf("Build   : %s", version.BuildDate))
-	logger.Error(fmt.Errorf("Go      : %s", runtime.Version()))
-}
-
-func checkConfig(file string) error {
-	_, err := config.Load(file)
-	if err != nil {
-		return err
-	}
-	logger.Error(fmt.Errorf("Config OK"))
-	return nil
-}
-
-func showEndpoint(file string) error {
-	cfg, err := config.Load(file)
-	if err != nil {
-		return err
+	// ======================================================================
+	// 🟢 FITUR 2: SAKELAR OVERRIDE MODE DEBUG VIA CLI
+	// ======================================================================
+	if forceDebug {
+		debug.Enable = true
+	} else {
+		// Jika tidak dipaksa lewat CLI, ikuti config global (jika ada field debug di json)
+		// debug.Enable = cfg.Debug 
 	}
 
-	ips, err := dialer.Resolve(cfg.SSH.Host)
-	if err != nil {
-		return err
+	// 3. Jalankan Worker Utama
+	if err := worker.StartWorker(cfg); err != nil {
+		// Error fatal di jalan (seperti auth failed / connection lost)
+		// Catatan: worker.StartWorker sudah menangani os.Exit(1) internal jika terjadi auth error
+		fmt.Printf("Error: %v\n", err)
+		os.Exit(1)
 	}
-
-	out := map[string]interface{}{
-		"host": cfg.SSH.Host,
-		"port": cfg.SSH.Port,
-		"ips":  ips,
-	}
-
-	data, err := json.MarshalIndent(out, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	logger.Error(fmt.Errorf("%s", string(data)))
-	return nil
-}
-
-func usage() {
-	logger.Error(fmt.Errorf("%s\n\nUsage:\n  qtun-ssh-worker --version\n  qtun-ssh-worker --check <config.json>\n  qtun-ssh-worker --show-endpoint <config.json>\n  qtun-ssh-worker --dial <config.json>", version.Name))
 }

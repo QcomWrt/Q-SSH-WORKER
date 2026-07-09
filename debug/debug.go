@@ -2,7 +2,7 @@ package debug
 
 import "fmt"
 
-var Enable = true
+var Enable = false
 
 func Println(a ...any) {
 	if Enable {
