@@ -8,12 +8,12 @@ import (
 
 func Address(cfg *config.Config) string {
 
-	if cfg.Payload.Enable &&
-		cfg.Payload.ProxyHost != "" &&
-		cfg.Payload.ProxyPort > 0 {
+	if cfg.Proxy.Enable &&
+		cfg.Proxy.Host != "" &&
+		cfg.Proxy.Port > 0 {
 
-		return cfg.Payload.ProxyHost + ":" +
-			strconv.Itoa(cfg.Payload.ProxyPort)
+		return cfg.Proxy.Host + ":" +
+			strconv.Itoa(cfg.Proxy.Port)
 	}
 
 	return cfg.SSH.Host + ":" +

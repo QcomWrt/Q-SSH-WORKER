@@ -3,22 +3,21 @@ package http
 import (
 	"bufio"
 	"fmt"
-	"net"
 	"net/textproto"
 	"strconv"
 	"strings"
 )
 
 type Response struct {
-	Version    string
-	StatusCode int
-	Status     string
-	Headers    map[string]string
+	Version       string
+	StatusCode    int
+	Status        string
+	Headers       map[string]string
+	ContentLength int64
+	Chunked       bool
 }
 
-func ReadResponse(conn net.Conn) (*Response, error) {
-
-	reader := bufio.NewReader(conn)
+func ReadResponse(reader *bufio.Reader) (*Response, error) {
 
 	line, err := reader.ReadString('\n')
 	if err != nil {
@@ -29,7 +28,10 @@ func ReadResponse(conn net.Conn) (*Response, error) {
 
 	parts := strings.SplitN(line, " ", 3)
 	if len(parts) < 3 {
-		return nil, fmt.Errorf("invalid HTTP response")
+		return nil, fmt.Errorf(
+			"invalid HTTP response: %q",
+			line,
+		)
 	}
 
 	code, err := strconv.Atoi(parts[1])
@@ -52,10 +54,29 @@ func ReadResponse(conn net.Conn) (*Response, error) {
 		}
 	}
 
+	var contentLength int64
+
+	if v, ok := headers["Content-Length"]; ok {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			contentLength = n
+		}
+	}
+
+	chunked := false
+
+	if v, ok := headers["Transfer-Encoding"]; ok {
+		chunked = strings.Contains(
+			strings.ToLower(v),
+			"chunked",
+		)
+	}
+
 	return &Response{
-		Version:    parts[0],
-		StatusCode: code,
-		Status:     parts[2],
-		Headers:    headers,
+		Version:       parts[0],
+		StatusCode:    code,
+		Status:        parts[2],
+		Headers:       headers,
+		ContentLength: contentLength,
+		Chunked:       chunked,
 	}, nil
 }

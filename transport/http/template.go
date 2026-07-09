@@ -14,7 +14,7 @@ const (
 )
 
 // Render mengganti placeholder pada template HTTP.
-func Render(cfg *config.Config, text string) string {
+func Render(cfg *config.Config, target Target, text string) string {
 
 	replacer := strings.NewReplacer(
 
@@ -24,9 +24,9 @@ func Render(cfg *config.Config, text string) string {
 		"[cr]", CR,
 
 		// SSH target
-		"[host]", cfg.SSH.Host,
-		"[port]", strconv.Itoa(cfg.SSH.Port),
-		"[host_port]", cfg.SSH.Host+":"+strconv.Itoa(cfg.SSH.Port),
+		"[host]", target.Host,
+		"[port]", strconv.Itoa(target.Port),
+		"[host_port]", target.Host+":"+strconv.Itoa(target.Port),
 
 		// HTTP transport
 		"[path]", cfg.Transport.Path,

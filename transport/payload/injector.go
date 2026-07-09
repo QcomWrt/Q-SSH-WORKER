@@ -1,64 +1,55 @@
 package payload
 
 import (
-	"fmt"
 	"net"
+	"strings"
 
 	"github.com/QcomWrt/Q-SSH-WORKER/config"
+	"github.com/QcomWrt/Q-SSH-WORKER/debug"
+	"github.com/QcomWrt/Q-SSH-WORKER/logger"
 	httpx "github.com/QcomWrt/Q-SSH-WORKER/transport/http"
+	"github.com/QcomWrt/Q-SSH-WORKER/transport/response"
 )
 
 func Inject(cfg *config.Config, conn net.Conn) (net.Conn, error) {
 
-	// Render template ([host], [port], [crlf], dst)
-	payload := httpx.Render(
+	target := httpx.Target{
+		Host: cfg.SSH.Host,
+		Port: cfg.SSH.Port,
+	}
+
+	// 1. Render payload JSON menjadi string utuh mentah
+	fullPayload := httpx.Render(
 		cfg,
+		target,
 		cfg.Payload.Request,
 	)
 
-	fmt.Println("[PAYLOAD] Render")
+	var firstPart string
+	var secondPart string
 
-	// Pecah berdasarkan [split]
-	parts := Split(payload)
-
-	fmt.Println("[PAYLOAD] Split")
-
-	fmt.Printf("[PAYLOAD] Parts : %d\n", len(parts))
-
-	// Kirim setiap bagian
-	for i, part := range parts {
-
-		fmt.Printf("[PAYLOAD] Write part %d\n", i+1)
-
-		err := Write(conn, part)
-		if err != nil {
-			return nil, err
-		}
+	// 2. Potong string payload secara presisi menggunakan standard strings Go
+	if strings.Contains(fullPayload, "[split]") {
+		parts := strings.SplitN(fullPayload, "[split]", 2)
+		firstPart = parts[0]
+		secondPart = parts[1]
+	} else {
+		// Fallback jika tidak ada tag [split], kirim semua di awal
+		firstPart = fullPayload
 	}
 
-	// Baca response pertama
-	resp, err := httpx.ReadResponse(conn)
-	if err != nil {
+	logger.PayloadSending()
+
+	debug.Println("\n[PART 1 - SENT TO PROXY]")
+	debug.Println(firstPart)
+
+	// 3. Kirim potongan pertama (GET / ...) murni ke jaringan
+	if _, err := conn.Write([]byte(firstPart)); err != nil {
 		return nil, err
 	}
 
-	fmt.Println("[PAYLOAD] Read Response")
+	logger.PayloadAccepted()
 
-	fmt.Printf(
-		"[PAYLOAD] Response : %d %s\n",
-		resp.StatusCode,
-		resp.Status,
-	)
-
-	fmt.Println("[PAYLOAD] Expect")
-	// Validasi response
-	if !expect(cfg, resp) {
-		return nil, fmt.Errorf(
-			"unexpected response: %d %s",
-			resp.StatusCode,
-			resp.Status,
-		)
-	}
-
-	return conn, nil
+	// 4. Teruskan potongan kedua (PATCH / ... beserta HTTP/ 69) ke Once
+	return response.Once(cfg, conn, secondPart)
 }

@@ -23,18 +23,9 @@
     "sni": ""
   },
 
-  "payload": {
-    "enable": true,
-
-    "proxy_host": "104.17.70.206",
-    "proxy_port": 80,
-
-    "request": "GET / HTTP/1.1[crlf]Host: bimbel.ruangguru.com[crlf][crlf]PATCH / HTTP/1.1[crlf]Host: [host][crlf]Upgrade: websocket[crlf][crlf][split]HTTP/ 69[crlf][crlf]",
-
-    "expect": [
-      "200",
-      "101",
-      "Connection established"
-    ]
+  "proxy": {
+      "enable": true,
+      "host": "104.17.70.206",
+      "port": 80
   }
 }

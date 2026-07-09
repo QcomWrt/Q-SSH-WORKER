@@ -7,10 +7,5 @@ import (
 )
 
 func DialTCP(ctx context.Context, address string) (net.Conn, error) {
-
-	return New(10 * time.Second).DialContext(
-		ctx,
-		"tcp",
-		address,
-	)
+	return New(10 * time.Second).DialContext(ctx, "tcp", address)
 }

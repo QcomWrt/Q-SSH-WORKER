@@ -1,51 +1,47 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"runtime"
-	"time"
 
 	"github.com/QcomWrt/Q-SSH-WORKER/config"
-	"github.com/QcomWrt/Q-SSH-WORKER/network"
+	"github.com/QcomWrt/Q-SSH-WORKER/logger" // Tersentralisasi ke logger
 	"github.com/QcomWrt/Q-SSH-WORKER/network/dialer"
-	workerssh "github.com/QcomWrt/Q-SSH-WORKER/ssh"
-	"github.com/QcomWrt/Q-SSH-WORKER/transport"
 	"github.com/QcomWrt/Q-SSH-WORKER/version"
+	"github.com/QcomWrt/Q-SSH-WORKER/worker"
 )
 
 func main() {
-
 	if err := run(); err != nil {
-		log.Fatal(err)
+		// Menangkap sisa error trakhir tanpa dobel print
+		logger.Error(err)
+		os.Exit(1)
 	}
 }
 
 func run() error {
-
 	if len(os.Args) < 2 {
 		usage()
 		return fmt.Errorf("missing command")
 	}
 
 	switch os.Args[1] {
-
 	case "--version":
 		showVersion()
 		return nil
-
 	case "--check":
 		return checkConfig(requireConfig())
-
 	case "--show-endpoint":
 		return showEndpoint(requireConfig())
-
 	case "--dial":
-		return dialTest(requireConfig())
-
+		cfg, err := config.Load(requireConfig())
+		if err != nil {
+			// Langsung return err mentah agar dihandle logger.Error(err) di main()
+			return err 
+		}
+		return worker.StartWorker(cfg)
 	default:
 		usage()
 		return fmt.Errorf("unknown command: %s", os.Args[1])
@@ -53,50 +49,41 @@ func run() error {
 }
 
 func requireConfig() string {
-
 	if len(os.Args) < 3 {
-		fmt.Println("Missing config file")
-		fmt.Println()
+		logger.Error(fmt.Errorf("missing config file"))
 		usage()
 		os.Exit(1)
 	}
-
 	return os.Args[2]
 }
 
 func showVersion() {
-
-	fmt.Println(version.Name)
-	fmt.Println()
-
-	fmt.Printf("Version : %s\n", version.Version)
-	fmt.Printf("Commit  : %s\n", version.Commit)
-	fmt.Printf("Build   : %s\n", version.BuildDate)
-	fmt.Printf("Go      : %s\n", runtime.Version())
+	// Memanfaatkan global fallback logger.Error untuk print string biasa agar konsisten lewat emit
+	logger.Error(fmt.Errorf("%s", version.Name))
+	logger.Error(fmt.Errorf("Version : %s", version.Version))
+	logger.Error(fmt.Errorf("Commit  : %s", version.Commit))
+	logger.Error(fmt.Errorf("Build   : %s", version.BuildDate))
+	logger.Error(fmt.Errorf("Go      : %s", runtime.Version()))
 }
 
 func checkConfig(file string) error {
-
 	_, err := config.Load(file)
 	if err != nil {
-		return fmt.Errorf("config error: %w", err)
+		return err
 	}
-
-	fmt.Println("Config OK")
-
+	logger.Error(fmt.Errorf("Config OK"))
 	return nil
 }
 
 func showEndpoint(file string) error {
-
 	cfg, err := config.Load(file)
 	if err != nil {
-		return fmt.Errorf("config error: %w", err)
+		return err
 	}
 
 	ips, err := dialer.Resolve(cfg.SSH.Host)
 	if err != nil {
-		return fmt.Errorf("resolve error: %w", err)
+		return err
 	}
 
 	out := map[string]interface{}{
@@ -110,73 +97,10 @@ func showEndpoint(file string) error {
 		return err
 	}
 
-	fmt.Println(string(data))
-
-	return nil
-}
-
-func dialTest(file string) error {
-
-	cfg, err := config.Load(file)
-	if err != nil {
-		return fmt.Errorf("config error: %w", err)
-	}
-
-	n, err := network.New(cfg)
-	if err != nil {
-		return err
-	}
-
-	ctx, cancel := context.WithTimeout(
-		context.Background(),
-		10*time.Second,
-	)
-	defer cancel()
-
-	// Network
-	conn, err := n.Dial(ctx)
-	if err != nil {
-		return fmt.Errorf("dial error: %w", err)
-	}
-
-	fmt.Println("TCP Connected")
-
-	// Transport
-	conn, err = transport.Wrap(cfg, conn)
-	if err != nil {
-		conn.Close()
-		return fmt.Errorf("transport error: %w", err)
-	}
-
-	fmt.Println("Transport Connected")
-
-	// SSH
-	client, err := workerssh.Dial(cfg, conn)
-	if err != nil {
-		conn.Close()
-		return fmt.Errorf("ssh error: %w", err)
-	}
-
-	fmt.Println("SSH Connected")
-
-	defer client.Close()
-	defer conn.Close()
-
-	fmt.Printf("Network : %s\n", cfg.Network.Type)
-	fmt.Printf("Remote  : %s\n", conn.RemoteAddr())
-	fmt.Printf("Local   : %s\n", conn.LocalAddr())
-
+	logger.Error(fmt.Errorf("%s", string(data)))
 	return nil
 }
 
 func usage() {
-
-	fmt.Println(version.Name)
-	fmt.Println()
-
-	fmt.Println("Usage:")
-	fmt.Println("  qtun-ssh-worker --version")
-	fmt.Println("  qtun-ssh-worker --check <config.json>")
-	fmt.Println("  qtun-ssh-worker --show-endpoint <config.json>")
-	fmt.Println("  qtun-ssh-worker --dial <config.json>")
+	logger.Error(fmt.Errorf("%s\n\nUsage:\n  qtun-ssh-worker --version\n  qtun-ssh-worker --check <config.json>\n  qtun-ssh-worker --show-endpoint <config.json>\n  qtun-ssh-worker --dial <config.json>", version.Name))
 }

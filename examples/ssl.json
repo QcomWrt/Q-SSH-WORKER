@@ -6,21 +6,20 @@
 
   "ssh": {
     "host": "server.pxstore.web.id",
-    "port": 443,
+    "port": 80,
     "username": "azy",
     "password": "ganteng"
   },
 
+  "network": {
+    "type": "tcp"
+  },
+
   "transport": {
-    "ws": false,
     "tls": true,
 
     "host": "",
     "path": "/",
     "sni": "bug.com"
-  },
-
-  "payload": {
-    "enable": false
   }
 }

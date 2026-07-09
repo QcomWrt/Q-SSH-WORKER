@@ -1,0 +1,5 @@
+# Mengabaikan semua file json di dalam folder examples
+examples/*.json
+
+# Mengecualikan template.json agar tetap bisa di-push
+!examples/template.json

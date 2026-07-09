@@ -5,14 +5,17 @@
   },
 
   "ssh": {
-    "host": "server.pxstore.web.id",
+    "host": "server.ssh.web.id",
     "port": 22,
     "username": "username",
     "password": "password"
   },
 
+  "network": {
+    "type": "tcp"
+  },
+
   "transport": {
-    "ws": false,
     "tls": false,
 
     "host": "",
@@ -20,17 +23,18 @@
     "sni": ""
   },
 
+  "proxy": {
+    "enable": false,
+    "host": "",
+    "port": 80
+  },
+
   "payload": {
     "enable": false,
-
-    "proxy_host": "",
-    "proxy_port": 0,
-
     "request": "",
     "expect": [
       "200",
-      "101",
-      "Connection established"
+      "101"
     ]
   }
 }
