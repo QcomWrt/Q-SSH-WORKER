@@ -1,0 +1,67 @@
+name: Manual Build Q-SSH-WORKER
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Bakal versi kompilasi (contoh: v1.0.0)"
+        required: true
+        default: "v1.0.0"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            output: qtun-ssh-worker-linux-amd64
+
+          - goos: linux
+            goarch: arm64
+            output: qtun-ssh-worker-linux-arm64
+
+          - goos: linux
+            goarch: arm
+            goarm: 7
+            output: qtun-ssh-worker-linux-armv7
+
+          - goos: android
+            goarch: arm64
+            output: qtun-ssh-worker-android-arm64
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Build binary with Custom Version Flags
+        env:
+          CGO_ENABLED: 0
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
+        run: |
+          mkdir -p release
+          CURRENT_DATE=$(date -u +'%Y-%m-%d_%H:%M:%S')
+          COMMIT_HASH=$(git rev-parse --short HEAD 2>/dev/null || echo "none")
+          
+          # Menyuntikkan metadata dinamis langsung ke package version milikmu
+          go build -ldflags="-s -w \
+            -X 'github.com/QcomWrt/Q-SSH-WORKER/version.Version=${{ github.event.inputs.version }}' \
+            -X 'github.com/QcomWrt/Q-SSH-WORKER/version.Commit=${COMMIT_HASH}' \
+            -X 'github.com/QcomWrt/Q-SSH-WORKER/version.BuildDate=${CURRENT_DATE}'" \
+            -o release/${{ matrix.output }} main.go
+
+      - name: Upload Binary Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.output }}
+          path: release/${{ matrix.output }}
+          retention-days: 7 # Artefak otomatis dihapus setelah 7 hari agar hemat storage repo
