@@ -17,20 +17,20 @@ jobs:
         include:
           - goos: linux
             goarch: amd64
-            output: qtun-ssh-worker-linux-amd64
+            output: Q-SSH-WORKER-linux-amd64
 
           - goos: linux
             goarch: arm64
-            output: qtun-ssh-worker-linux-arm64
+            output: Q-SSH-WORKER-linux-arm64
 
           - goos: linux
             goarch: arm
             goarm: 7
-            output: qtun-ssh-worker-linux-armv7
+            output: Q-SSH-WORKER-linux-armv7
 
           - goos: android
             goarch: arm64
-            output: qtun-ssh-worker-android-arm64
+            output: Q-SSH-WORKER-android-arm64
 
     steps:
       - name: Checkout source
