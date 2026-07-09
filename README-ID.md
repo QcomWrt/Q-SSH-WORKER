@@ -214,36 +214,44 @@ Contoh:
 
 ```json
 {
-    "listen": {
-        "host": "127.0.0.1",
-        "port": 1080
-    },
+  "listen": {
+    "host": "127.0.0.1",
+    "port": 1080
+  },
 
-    "ssh": {
-        "host": "server.example.com",
-        "port": 22,
-        "username": "user",
-        "password": "password"
-    },
+  "ssh": {
+    "host": "server.ssh.web.id",
+    "port": 22,
+    "username": "username",
+    "password": "password"
+  },
 
-    "network": {
-        "type": "tcp"
-    },
+  "network": {
+    "type": "tcp"
+  },
 
-    "transport": {
-        "tls": false,
-        "host": "",
-        "path": "/",
-        "sni": ""
-    },
+  "transport": {
+    "tls": false,
 
-    "payload": {
-        "enable": false
-    },
+    "host": "",
+    "path": "/",
+    "sni": ""
+  },
 
-    "worker": {
-        "max_retry": 0
-    }
+  "proxy": {
+    "enable": false,
+    "host": "",
+    "port": 80
+  },
+
+  "payload": {
+    "enable": false,
+    "request": "",
+    "expect": [
+      "200",
+      "101"
+    ]
+  }
 }
 ```
 
