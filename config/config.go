@@ -7,5 +7,6 @@ type Config struct {
     Proxy     Proxy     `json:"proxy"`
     Transport Transport `json:"transport"`
     Payload   Payload   `json:"payload"`
-    Worker    Worker    `json:"worker"`
+    // Mengikat struct Worker (dari worker.go) ke tag JSON "concurrency"
+    Worker    Worker    `json:"concurrency"` 
 }

@@ -18,7 +18,7 @@ import (
 
 // StartWorker mengelola inisialisasi tunggal dengan kendali reconnect internal di awal dial.
 // Jika terjadi kegagalan fatal di tengah jalan saat terowongan aktif, ia akan keluar
-// agar siklus recovery diambil alih penuh oleh watchdog.sh OpenWrt.
+// agar siklus recovery diambil alih penuh oleh watchdog.sh OpenWrt atau Master Manager biner.
 func StartWorker(cfg *config.Config) error {
 	// Inisialisasi kebijakan jeda koneksi ulang untuk mengamankan proses dial awal
 	reconnectPolicy := NewReconnectPolicy(2*time.Second, 30*time.Second)
@@ -121,9 +121,20 @@ func StartWorker(cfg *config.Config) error {
 	debug.SSHNetworkDetails(cfg.Network.Type, remoteAddrStr, conn.RemoteAddr(), conn.LocalAddr())
 	logger.StatusConnected()
 
-	// 5. Jalankan Server SOCKS5 Inbound secara Asinkronus (Goroutine)
+	// ======================================================================
+	// 🟢 5. JALANKAN SERVER SOCKS5 (MENDUKUNG MULTI-PORT DINAMIS DARI ENV)
+	// ======================================================================
 	socksErrChan := make(chan error, 1)
 	go func() {
+		// Periksa apakah Master Manager mengirimkan port spesifik via Environment Variable
+		if envPort := os.Getenv("QTUN_TARGET_PORT"); envPort != "" {
+			var dynamicPort int
+			// Parse string port menjadi integer
+			if _, err := fmt.Sscanf(envPort, "%d", &dynamicPort); err == nil && dynamicPort > 0 {
+				cfg.Listen.Port = dynamicPort // Timpa port default config dengan port dari Master
+			}
+		}
+
 		socksErrChan <- socks.ListenAndServe(cfg, client)
 	}()
 
