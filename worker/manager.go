@@ -31,7 +31,7 @@ func StartWorker(cfg *config.Config) error {
 	var conn net.Conn
 
 	// ======================================================================
-	// 🟢 PINDAHKAN KE SINI (DI LUAR LOOP): CETAK LOG HANYA 1 KALI SAAT START
+	// 🟢 CETAK LOG HANYA 1 KALI SAAT START DI LUAR LOOP
 	// ======================================================================
 	if cfg.Proxy.Host != "" {
 		logger.ProxyConnecting() // Mengeluarkan: "Connecting Proxy..."
@@ -42,8 +42,6 @@ func StartWorker(cfg *config.Config) error {
 	// Loop khusus pemicu dial awal sampai sukses terhubung
 	for {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-
-		// ❌ HAPUS BLOK KONDISIONAL LOG YANG TADINYA ADA DI SINI
 
 		// 1. Dial Connection (Bisa ke Proxy IP atau langsung ke SSH IP)
 		conn, err = n.Dial(ctx)
@@ -62,20 +60,24 @@ func StartWorker(cfg *config.Config) error {
 	// Reset hitungan kegagalan backoff karena dial dasar sukses
 	reconnectPolicy.Reset()
 
-	// Reset hitungan kegagalan backoff karena dial dasar sukses
-	reconnectPolicy.Reset()
-
 	// 2. Bungkus koneksi dengan observer statistik Rx/Tx
 	workerStats := &TrafficStats{}
 	conn = NewObservedConn(conn, workerStats)
 
-	// 3. Transport Layer Injection / Wrapping (Proses Manipulasi / Injeksi Payload)
-	conn, err = transport.Wrap(cfg, conn)
+	// ======================================================================
+	// 🟢 3. TRANSPORT LAYER INJECTION (DIAMANKAN DARI NIL POINTER PANIC)
+	// ======================================================================
+	wrappedConn, err := transport.Wrap(cfg, conn)
 	if err != nil {
-		conn.Close()
-		logger.ProxyError(err) // Mengirim log [PROXY ERROR] ke sistem emit
+		// Jika handshake payload gagal/ditutup CDN, pastikan socket dasar (conn) ditutup
+		if conn != nil {
+			conn.Close()
+		}
+		logger.ProxyError(err) // Mengirim log [PROXY ERROR] ke sistem emit tanpa crash
 		return err
 	}
+	// Salin koneksi yang berhasil dimanipulasi ke variabel utama
+	conn = wrappedConn
 
 	// ======================================================================
 	// AMAN DARI LOG GANDA: DICETAK HANYA SETELAH JABAT TANGAN PAYLOAD SUKSES
@@ -91,7 +93,9 @@ func StartWorker(cfg *config.Config) error {
 	// 4. Jabat Tangan / Handshake Protokol SSH
 	client, err := workerssh.Dial(cfg, conn)
 	if err != nil {
-		conn.Close()
+		if conn != nil {
+			conn.Close()
+		}
 		
 		// Cetak satu baris error kustom ringkas penanda kegagalan auth akun
 		logger.SSHError(err) 
