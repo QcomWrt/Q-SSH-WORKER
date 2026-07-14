@@ -1,0 +1,78 @@
+name: Release Q-SSH-WORKER Official
+
+on:
+  push:
+    tags:
+      - 'v*' # Memicu otomatis hanya ketika kamu melakukan push tag baru (misal: v1.0.0)
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - target: amd64
+            output: Q-SSH-WORKER-linux-amd64
+
+          - target: arm64
+            output: Q-SSH-WORKER-linux-arm64
+
+          - target: armv7
+            output: Q-SSH-WORKER-linux-armv7
+
+          - target: android
+            output: Q-SSH-WORKER-android-arm64
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Build binary via Makefile
+        run: |
+          # Ekstrak nama tag dari github ref (contoh: v1.0.0)
+          TAG_VERSION=${GITHUB_REF#refs/tags/}
+          
+          # Panggil Makefile dengan menyuntikkan tag versi resmi ke variabel VERSION
+          VERSION=${TAG_VERSION} make build-${{ matrix.target }}
+
+      - name: Upload Temporary Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.output }}
+          path: release/${{ matrix.output }}
+          retention-days: 1
+
+  release:
+    runs-on: ubuntu-latest
+    needs: build # Wajib menunggu seluruh proses kompilasi matrix selesai
+    permissions:
+      contents: write # Izin krusial agar GitHub Actions bisa membuat Release
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Agar otomatisasi pencatatan riwayat commit bekerja penuh
+
+      - name: Create Release Directory
+        run: mkdir -p all-releases
+
+      - name: Download All Artifacts from Build Job
+        uses: actions/download-artifact@v4
+        with:
+          path: all-releases
+          merge-multiple: true # Mengumpulkan semua biner langsung rata di dalam satu folder
+
+      - name: Publish to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: all-releases/*
+          draft: false
+          prerelease: false
+          generate_release_notes: true # Otomatis merangkum commit log menjadi deskripsi rilis
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
