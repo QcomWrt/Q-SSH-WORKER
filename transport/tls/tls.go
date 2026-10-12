@@ -9,11 +9,14 @@ import (
 )
 
 func Wrap(cfg *config.Config, conn net.Conn) (net.Conn, error) {
-	if !cfg.Proxy.TLSEnable {
+	if !cfg.Transport.TLS {
 		return conn, nil
 	}
 
-	sniHost := cfg.Proxy.SNI
+	sniHost := cfg.Transport.SNI
+	if sniHost == "" {
+		sniHost = cfg.Transport.Host
+	}
 	if sniHost == "" {
 		sniHost = cfg.Proxy.Host
 	}
@@ -25,7 +28,6 @@ func Wrap(cfg *config.Config, conn net.Conn) (net.Conn, error) {
 
 	tlsConn := cryptoTLS.Client(conn, tlsConfig)
 
-	// Jalankan TLS Handshake secara eksplisit
 	if err := tlsConn.Handshake(); err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("tls handshake failed (SNI: %s): %w", sniHost, err)
