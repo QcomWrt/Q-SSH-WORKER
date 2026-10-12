@@ -15,6 +15,7 @@ import (
 	"github.com/QcomWrt/Q-SSH-WORKER/socks"
 	workerssh "github.com/QcomWrt/Q-SSH-WORKER/ssh"
 	"github.com/QcomWrt/Q-SSH-WORKER/transport"
+	workertls "github.com/QcomWrt/Q-SSH-WORKER/transport/tls"
 )
 
 // StartWorker mengelola inisialisasi tunggal dengan kendali reconnect internal di awal dial.
@@ -64,6 +65,17 @@ func StartWorker(cfg *config.Config) error {
 	// 2. Bungkus koneksi dengan observer statistik Rx/Tx
 	workerStats := &TrafficStats{}
 	conn = NewObservedConn(conn, workerStats)
+
+	tlsConn, err := workertls.Wrap(cfg, conn)
+	if err != nil {
+		if conn != nil {
+			conn.Close()
+		}
+		logger.ProxyError(fmt.Errorf("TLS Error: %w", err))
+		return err
+	}
+
+	conn = tlsConn
 
 	// ======================================================================
 	// 🟢 3. TRANSPORT LAYER INJECTION (DIAMANKAN DARI NIL POINTER PANIC)
