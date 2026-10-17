@@ -92,31 +92,29 @@ func StartWorker(cfg *config.Config) error {
 	logger.SSHConnecting()
 
 	// 4. Jabat Tangan / Handshake Protokol SSH
-    client, err := workerssh.Dial(cfg, conn)
-    if err != nil {
-        logger.SSHError(err)
+	client, err := workerssh.Dial(cfg, conn)
+	if err != nil {
+		logger.SSHError(err)
 
-        // 🟢 INTERSEPSI JAUH LEBIH KETAT & SENSITIF
-        errStr := strings.ToLower(err.Error())
-        if strings.Contains(errStr, "handshake") || 
-           strings.Contains(errStr, "auth") || 
-           strings.Contains(errStr, "credential") || 
-           strings.Contains(errStr, "password") || 
-           strings.Contains(errStr, "sign") || 
-           strings.Contains(errStr, "illegal") ||
-           strings.Contains(errStr, "rejected") {
-            
-            println("\n🛑 [FATAL - AGENT KILLED] Kredensial SSH ditolak oleh server Dropbear!")
-            println("💡 Info: Akun sudah expired atau password salah. Memaksa mematikan Master Process...")
-            
-            // ⚠️ Supaya Master Manager (main.go) juga ikut mati total secara instan
-            // tanpa sempat melakukan respawn 3 detik, kita bisa gunakan sinyal interupsi
-            // langsung ke biner utama, atau pastikan langkah 2 di main.go aktif.
-            os.Exit(5) 
-        }
+		errStr := strings.ToLower(err.Error())
+		if strings.Contains(errStr, "handshake") || 
+		   strings.Contains(errStr, "auth") || 
+		   strings.Contains(errStr, "credential") || 
+		   strings.Contains(errStr, "password") || 
+		   strings.Contains(errStr, "sign") || 
+		   strings.Contains(errStr, "illegal") ||
+		   strings.Contains(errStr, "rejected") {
+			
+			// CETAK LOG DENGAN fmt.Printf AGAR DITANGKAP LOGLISTENER DI ANDROID
+			fmt.Println("\n🛑 [FATAL - AGENT KILLED] Kredensial SSH ditolak oleh server Dropbear!")
+			fmt.Println("💡 Info: Akun sudah expired atau password salah.")
+			
+			// Hapus `os.Exit(5)` dan ganti dengan kembalikan error
+			return fmt.Errorf("SSH Auth Failed: Kredensial SSH ditolak atau expired")
+		}
 
-        return err
-    }
+		return err
+	}
 
 	logger.SSHConnected()
 

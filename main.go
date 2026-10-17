@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 	"os/exec"
 	"runtime"
 	"time"
@@ -117,6 +118,11 @@ func main() {
 	if isChild || !cfg.Worker.Enable {
 		if err := worker.StartWorker(cfg); err != nil {
 			fmt.Printf("Worker Error: %v\n", err)
+			
+			// Cek apakah error merupakan kegagalan otentikasi SSH
+			if strings.Contains(err.Error(), "Auth Failed") {
+				os.Exit(5)
+			}
 			os.Exit(1)
 		}
 		return
