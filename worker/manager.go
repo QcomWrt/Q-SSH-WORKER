@@ -1,11 +1,12 @@
+
 package worker
 
 import (
 	"context"
 	"fmt"
 	"net"
-	"strings"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/QcomWrt/Q-SSH-WORKER/config"
@@ -17,110 +18,158 @@ import (
 	"github.com/QcomWrt/Q-SSH-WORKER/transport"
 )
 
-// StartWorker mengelola inisialisasi tunggal dengan kendali reconnect internal di awal dial.
-// Jika terjadi kegagalan fatal di tengah jalan saat terowongan aktif, ia akan keluar
-// agar siklus recovery diambil alih penuh oleh watchdog.sh OpenWrt atau Master Manager biner.
+// API lama tetap tersedia untuk kompatibilitas OpenWrt.
 func StartWorker(cfg *config.Config) error {
-	// Inisialisasi kebijakan jeda koneksi ulang untuk mengamankan proses dial awal
-	reconnectPolicy := NewReconnectPolicy(2*time.Second, 30*time.Second)
+	return StartWorkerContext(context.Background(), cfg)
+}
+
+// StartWorkerContext memungkinkan pemanggil menghentikan worker.
+func StartWorkerContext(ctx context.Context, cfg *config.Config) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	reconnectPolicy := NewReconnectPolicy(
+		2*time.Second,
+		30*time.Second,
+	)
 
 	n, err := network.New(cfg)
 	if err != nil {
 		return fmt.Errorf("network init failed: %w", err)
 	}
 
+	if cfg.Proxy.Host != "" {
+		logger.ProxyConnecting()
+	} else {
+		logger.TCPConnecting()
+	}
+
+	// 1. Dial awal yang dapat dibatalkan.
 	var conn net.Conn
 
-	// ======================================================================
-	// 🟢 CETAK LOG HANYA 1 KALI SAAT START DI LUAR LOOP
-	// ======================================================================
-	if cfg.Proxy.Host != "" {
-		logger.ProxyConnecting() // Mengeluarkan: "Connecting Proxy..."
-	} else {
-		logger.TCPConnecting()   // Mengeluarkan: "Connecting TCP..."
-	}
-
-	// Loop khusus pemicu dial awal sampai sukses terhubung
 	for {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-
-		// 1. Dial Connection (Bisa ke Proxy IP atau langsung ke SSH IP)
-		conn, err = n.Dial(ctx)
-		cancel() // Amankan context sesegera mungkin
-		if err != nil {
-			delay := reconnectPolicy.GetDelay()
-			logger.StatusError(fmt.Sprintf("Connection failed: %v. Retrying in %v...", err, delay.Round(time.Second)))
-			time.Sleep(delay)
-			continue // Ulangi proses dial dengan interval backoff
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 
-		// Keluar dari loop jika koneksi soket dasar berhasil terbentuk
-		break
+		dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		conn, err = n.Dial(dialCtx)
+		cancel()
+
+		if err == nil {
+			break
+		}
+
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		delay := reconnectPolicy.GetDelay()
+		logger.StatusError(fmt.Sprintf(
+			"Connection failed: %v. Retrying in %v...",
+			err,
+			delay.Round(time.Second),
+		))
+
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			return ctx.Err()
+
+		case <-timer.C:
+		}
 	}
 
-	// Reset hitungan kegagalan backoff karena dial dasar sukses
 	reconnectPolicy.Reset()
 
-	// 2. Bungkus koneksi dengan observer statistik Rx/Tx
+	// Tutup socket dasar jika context dibatalkan, termasuk saat
+	// transport atau SSH handshake sedang berlangsung.
+	stopBaseClose := context.AfterFunc(ctx, func() {
+		_ = conn.Close()
+	})
+	defer stopBaseClose()
+
 	workerStats := &TrafficStats{}
 	conn = NewObservedConn(conn, workerStats)
 
-	// ======================================================================
-	// 🟢 3. TRANSPORT LAYER INJECTION (DIAMANKAN DARI NIL POINTER PANIC)
-	// ======================================================================
 	wrappedConn, err := transport.Wrap(cfg, conn)
 	if err != nil {
-		// Jika handshake payload gagal/ditutup CDN, pastikan socket dasar (conn) ditutup
-		if conn != nil {
-			conn.Close()
-		}
-		logger.ProxyError(err) // Mengirim log [PROXY ERROR] ke sistem emit tanpa crash
+		_ = conn.Close()
+		logger.ProxyError(err)
 		return err
 	}
-	// Salin koneksi yang berhasil dimanipulasi ke variabel utama
 	conn = wrappedConn
 
-	// ======================================================================
-	// AMAN DARI LOG GANDA: DICETAK HANYA SETELAH JABAT TANGAN PAYLOAD SUKSES
-	// ======================================================================
 	if cfg.Proxy.Host != "" {
-		// Menggunakan fungsi debug.Proxy asli bawaan proyekmu yang sudah patuh pada debug.Enable
-		debug.Proxy(cfg.Proxy.Host, cfg.Proxy.Port, cfg.SSH.Host, cfg.SSH.Port)
+		debug.Proxy(
+			cfg.Proxy.Host,
+			cfg.Proxy.Port,
+			cfg.SSH.Host,
+			cfg.SSH.Port,
+		)
 		logger.ProxyConnected()
+	}
+
+	if err := ctx.Err(); err != nil {
+		_ = conn.Close()
+		return err
 	}
 
 	logger.SSHConnecting()
 
-	// 4. Jabat Tangan / Handshake Protokol SSH
 	client, err := workerssh.Dial(cfg, conn)
 	if err != nil {
-		logger.SSHError(err)
-
-		errStr := strings.ToLower(err.Error())
-		if strings.Contains(errStr, "handshake") || 
-		   strings.Contains(errStr, "auth") || 
-		   strings.Contains(errStr, "credential") || 
-		   strings.Contains(errStr, "password") || 
-		   strings.Contains(errStr, "sign") || 
-		   strings.Contains(errStr, "illegal") ||
-		   strings.Contains(errStr, "rejected") {
-			
-			// CETAK LOG DENGAN fmt.Printf AGAR DITANGKAP LOGLISTENER DI ANDROID
-			fmt.Println("\n🛑 [FATAL - AGENT KILLED] Kredensial SSH ditolak oleh server Dropbear!")
-			fmt.Println("💡 Info: Akun sudah expired atau password salah.")
-			
-			// Hapus `os.Exit(5)` dan ganti dengan kembalikan error
-			return fmt.Errorf("SSH Auth Failed: Kredensial SSH ditolak atau expired")
+		_ = conn.Close()
+		if ctx.Err() != nil {
+			return ctx.Err()
 		}
 
+		logger.SSHError(err)
+		errStr := strings.ToLower(err.Error())
+
+		if strings.Contains(errStr, "handshake") ||
+			strings.Contains(errStr, "auth") ||
+			strings.Contains(errStr, "credential") ||
+			strings.Contains(errStr, "password") ||
+			strings.Contains(errStr, "sign") ||
+			strings.Contains(errStr, "illegal") ||
+			strings.Contains(errStr, "rejected") {
+
+			fmt.Println(
+				"\n🛑 [FATAL - AGENT KILLED] " +
+					"Kredensial SSH ditolak oleh server Dropbear!",
+			)
+			fmt.Println(
+				"💡 Info: Akun sudah expired atau password salah.",
+			)
+
+			return fmt.Errorf(
+				"SSH Auth Failed: Kredensial SSH ditolak atau expired",
+			)
+		}
+
+		return err
+	}
+
+	// Cleanup tetap berjalan meskipun worker dihentikan.
+	defer client.Close()
+	defer conn.Close()
+
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 
 	logger.SSHConnected()
 
-	// Ambil IP SSH untuk keperluan cetak log debug
 	remoteIP := cfg.SSH.Host
-	if ips, err := net.LookupIP(cfg.SSH.Host); err == nil && len(ips) > 0 {
+	if ips, lookupErr := net.LookupIP(cfg.SSH.Host); lookupErr == nil {
 		for _, ip := range ips {
 			if ip.To4() != nil {
 				remoteIP = ip.String()
@@ -128,47 +177,49 @@ func StartWorker(cfg *config.Config) error {
 			}
 		}
 	}
-	remoteAddrStr := fmt.Sprintf("%s:%d", remoteIP, cfg.SSH.Port)
 
-	debug.SSHNetworkDetails(cfg.Network.Type, remoteAddrStr, conn.RemoteAddr(), conn.LocalAddr())
+	remoteAddrStr := fmt.Sprintf("%s:%d", remoteIP, cfg.SSH.Port)
+	debug.SSHNetworkDetails(
+		cfg.Network.Type,
+		remoteAddrStr,
+		conn.RemoteAddr(),
+		conn.LocalAddr(),
+	)
 	logger.StatusConnected()
 
-	// ======================================================================
-	// 🟢 5. JALANKAN SERVER SOCKS5 (MENDUKUNG MULTI-PORT DINAMIS DARI ENV)
-	// ======================================================================
+	// Pertahankan dukungan port dinamis dari Master Manager OpenWrt.
+	if envPort := os.Getenv("QTUN_TARGET_PORT"); envPort != "" {
+		var dynamicPort int
+		if _, parseErr := fmt.Sscanf(envPort, "%d", &dynamicPort); parseErr == nil &&
+			dynamicPort > 0 && dynamicPort <= 65535 {
+			cfg.Listen.Port = dynamicPort
+		}
+	}
+
 	socksErrChan := make(chan error, 1)
 	go func() {
-		// Periksa apakah Master Manager mengirimkan port spesifik via Environment Variable
-		if envPort := os.Getenv("QTUN_TARGET_PORT"); envPort != "" {
-			var dynamicPort int
-			// Parse string port menjadi integer
-			if _, err := fmt.Sscanf(envPort, "%d", &dynamicPort); err == nil && dynamicPort > 0 {
-				cfg.Listen.Port = dynamicPort // Timpa port default config dengan port dari Master
-			}
-		}
-
-		socksErrChan <- socks.ListenAndServe(cfg, client)
+		socksErrChan <- socks.ListenAndServeContext(ctx, cfg, client)
 	}()
 
-	// 6. Jalankan Liveness Check via MonitorHealth
-	healthCtx, cancelHealth := context.WithCancel(context.Background())
+	healthCtx, cancelHealth := context.WithCancel(ctx)
+	defer cancelHealth()
+
 	healthFailChan := make(chan bool, 1)
 	go MonitorHealth(healthCtx, client, healthFailChan)
 
-	// Menahan proses tetap hidup melayani data. Jika salah satu pemicu aktif, matikan worker.
-	var fatalErr error
 	select {
+	case <-ctx.Done():
+		return ctx.Err()
+
 	case err := <-socksErrChan:
-		fatalErr = fmt.Errorf("socks5 server stopped: %v", err)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return fmt.Errorf("socks5 server stopped: %v", err)
+
 	case <-healthFailChan:
-		fatalErr = fmt.Errorf("koneksi internet mati gantung dideteksi oleh health monitor")
+		return fmt.Errorf(
+			"koneksi internet mati gantung dideteksi oleh health monitor",
+		)
 	}
-
-	// Bersihkan resource sebelum exit
-	cancelHealth()
-	client.Close()
-	conn.Close()
-
-	// Kembalikan error agar ditangkap main.go untuk memicu os.Exit(1)
-	return fatalErr
 }

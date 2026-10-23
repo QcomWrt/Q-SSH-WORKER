@@ -1,6 +1,9 @@
+
 package socks
 
 import (
+	"context"
+	"errors"
 	"net"
 	"strconv"
 
@@ -9,24 +12,59 @@ import (
 	gossh "golang.org/x/crypto/ssh"
 )
 
+// ListenAndServe mempertahankan API lama untuk OpenWrt.
 func ListenAndServe(cfg *config.Config, sshClient *gossh.Client) error {
-	listenAddr := net.JoinHostPort(cfg.Listen.Host, strconv.Itoa(cfg.Listen.Port))
+	return ListenAndServeContext(context.Background(), cfg, sshClient)
+}
+
+// ListenAndServeContext menjalankan SOCKS5 sampai context dibatalkan
+// atau server mengalami error.
+func ListenAndServeContext(
+	ctx context.Context,
+	cfg *config.Config,
+	sshClient *gossh.Client,
+) error {
+	listenAddr := net.JoinHostPort(
+		cfg.Listen.Host,
+		strconv.Itoa(cfg.Listen.Port),
+	)
 
 	listener, err := net.Listen("tcp", listenAddr)
 	if err != nil {
 		return err
 	}
+
+	// Tutup listener agar Accept() berhenti saat context dibatalkan.
+	stopClose := context.AfterFunc(ctx, func() {
+		_ = listener.Close()
+	})
+	defer stopClose()
 	defer listener.Close()
 
-	// Memicu emit: "SOCKS5 Server listening on 127.0.0.1:1080"
 	logger.SOCKS5Listening(listenAddr)
 
 	for {
-		clientConn, err := listener.Accept()
-		if err != nil {
-			continue
+		if err := ctx.Err(); err != nil {
+			return nil
 		}
 
-		go HandleRequest(clientConn, sshClient)
+		clientConn, err := listener.Accept()
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+
+			// Error selain pembatalan harus diteruskan,
+			// bukan diulang tanpa batas.
+			if errors.Is(err, net.ErrClosed) {
+				return err
+			}
+			return err
+		}
+
+		go func(conn net.Conn) {
+			// HandleRequest bertanggung jawab atas koneksi klien.
+			HandleRequest(conn, sshClient)
+		}(clientConn)
 	}
 }
