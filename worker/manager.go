@@ -1,4 +1,3 @@
-
 package worker
 
 import (
@@ -127,35 +126,14 @@ func StartWorkerContext(ctx context.Context, cfg *config.Config) error {
 	client, err := workerssh.Dial(cfg, conn)
 	if err != nil {
 		_ = conn.Close()
+
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 
 		logger.SSHError(err)
-		errStr := strings.ToLower(err.Error())
 
-		if strings.Contains(errStr, "handshake") ||
-			strings.Contains(errStr, "auth") ||
-			strings.Contains(errStr, "credential") ||
-			strings.Contains(errStr, "password") ||
-			strings.Contains(errStr, "sign") ||
-			strings.Contains(errStr, "illegal") ||
-			strings.Contains(errStr, "rejected") {
-
-			fmt.Println(
-				"\n🛑 [FATAL - AGENT KILLED] " +
-					"Kredensial SSH ditolak oleh server Dropbear!",
-			)
-			fmt.Println(
-				"💡 Info: Akun sudah expired atau password salah.",
-			)
-
-			return fmt.Errorf(
-				"SSH Auth Failed: Kredensial SSH ditolak atau expired",
-			)
-		}
-
-		return err
+		return fmt.Errorf("SSH connection failed: %w", err)
 	}
 
 	// Cleanup tetap berjalan meskipun worker dihentikan.

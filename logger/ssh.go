@@ -1,13 +1,20 @@
 package logger
 
+import "fmt"
+
 func SSHConnecting() {
-    emit("Connecting SSH...")
+	emit("Connecting SSH...")
 }
 
 func SSHConnected() {
-    emit("SSH Connected")
+	emit("SSH Connected")
 }
 
 func SSHError(err error) {
-    emit("[SSH ERROR] Auth/Handshake failed")
+	if err == nil {
+		emit("[SSH ERROR] Unknown error (nil)")
+		return
+	}
+
+	emit(fmt.Sprintf("[SSH ERROR] %v", err))
 }
