@@ -11,4 +11,9 @@ func emit(msg string) {
 	}
 
 	fmt.Println(msg)
+	writeFile(msg)
+}
+
+func Status(format string, args ...any) {
+	emit(fmt.Sprintf(format, args...))
 }

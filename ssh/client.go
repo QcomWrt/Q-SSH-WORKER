@@ -1,14 +1,27 @@
 package ssh
 
 import (
+	"errors"
 	"fmt"
 	"net"
+	"time"
 
 	gossh "golang.org/x/crypto/ssh"
 
 	"github.com/QcomWrt/Q-SSH-WORKER/config"
-	"github.com/QcomWrt/Q-SSH-WORKER/debug" // Import modul debug milikmu
+	"github.com/QcomWrt/Q-SSH-WORKER/debug"
 )
+
+const (
+	// keepaliveInterval: jeda antar keepalive SSH ke server.
+	keepaliveInterval = 5 * time.Second
+	// keepaliveTimeout: batas menunggu balasan keepalive.
+	// Sesi dianggap mati kalau tidak ada balasan dalam batas ini.
+	keepaliveTimeout = 5 * time.Second
+)
+
+// errKeepaliveTimeout dipakai saat server tidak membalas keepalive.
+var errKeepaliveTimeout = errors.New("keepalive timeout: server tidak membalas")
 
 func Dial(cfg *config.Config, conn net.Conn) (*gossh.Client, error) {
 
@@ -33,14 +46,12 @@ func Dial(cfg *config.Config, conn net.Conn) (*gossh.Client, error) {
 		return nil, fmt.Errorf("no ssh authentication method available")
 	}
 
-	// Inisialisasi clientConfig menggunakan alias gossh yang benar
 	clientConfig := &gossh.ClientConfig{
-		User: cfg.SSH.Username,
-		Auth: authMethods, // Menggunakan penanganan authMethods yang dinamis bawaanmu
-
+		User:            cfg.SSH.Username,
+		Auth:            authMethods,
 		HostKeyCallback: gossh.InsecureIgnoreHostKey(),
-		
-		// KUNCI UTAMA: Menangkap pesan banner/MOTD dari VPS secara legal
+
+		// Menangkap pesan banner/MOTD dari VPS
 		BannerCallback: func(message string) error {
 			debug.SSHServerMessage(message)
 			return nil
@@ -50,15 +61,44 @@ func Dial(cfg *config.Config, conn net.Conn) (*gossh.Client, error) {
 	cc, chans, reqs, err := gossh.NewClientConn(
 		conn,
 		conn.RemoteAddr().String(),
-		clientConfig, // Sekarang variabel ini sudah terdefinisi secara presisi
+		clientConfig,
 	)
 	if err != nil {
 		return nil, err
 	}
 
-	return gossh.NewClient(
-		cc,
-		chans,
-		reqs,
-	), nil
+	client := gossh.NewClient(cc, chans, reqs)
+
+	// Keepalive: deteksi sesi mati lebih cepat daripada probe SOCKS.
+	go keepAlive(client)
+
+	return client, nil
+}
+
+// keepAlive mengirim request keepalive berkala. Jika server tidak membalas
+// dalam keepaliveTimeout, client ditutup. Penutupan itu membuat client.Wait()
+// kembali, sehingga sesi dinyatakan putus.
+func keepAlive(client *gossh.Client) {
+	ticker := time.NewTicker(keepaliveInterval)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		result := make(chan error, 1)
+		go func() {
+			_, _, err := client.SendRequest("keepalive@openssh.com", true, nil)
+			result <- err
+		}()
+
+		select {
+		case err := <-result:
+			if err != nil {
+				// Koneksi sudah tertutup dari luar, atau rusak.
+				return
+			}
+		case <-time.After(keepaliveTimeout):
+			_ = client.Close()
+			_ = errKeepaliveTimeout
+			return
+		}
+	}
 }

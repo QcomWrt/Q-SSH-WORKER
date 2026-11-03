@@ -1,17 +1,21 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"net"
 	"os"
-	"strings"
 	"os/exec"
+	"os/signal"
 	"runtime"
+	"strings"
+	"syscall"
 	"time"
 
 	"github.com/QcomWrt/Q-SSH-WORKER/config"
 	"github.com/QcomWrt/Q-SSH-WORKER/debug"
+	"github.com/QcomWrt/Q-SSH-WORKER/logger"
 	"github.com/QcomWrt/Q-SSH-WORKER/version"
 	"github.com/QcomWrt/Q-SSH-WORKER/worker"
 )
@@ -23,19 +27,26 @@ func main() {
 		showEndpointPath string
 		showVersion      bool
 		forceDebug       bool
-		isChild          bool // 🟢 Flag internal rahasia untuk memisahkan Master & Child
+		isChild          bool
 	)
 
+	// var logPath string
+	// flag.StringVar(&logPath, "log", "", "Jalur file log (opsional)")
 	flag.StringVar(&dialPath, "dial", "", "Jalur ke file konfigurasi JSON untuk terhubung ke SSH")
 	flag.StringVar(&checkPath, "check", "", "Hanya memvalidasi sintaks file konfigurasi JSON")
 	flag.StringVar(&showEndpointPath, "show-endpoint", "", "Ambil detail IP Server VPS untuk keperluan routing bypass")
 	flag.BoolVar(&showVersion, "version", false, "Menampilkan informasi versi biner Q-SSH-WORKER")
 	flag.BoolVar(&forceDebug, "debug", false, "Memaksa mengaktifkan mode debug secara manual via CLI")
 	flag.BoolVar(&isChild, "child", false, "Flag internal penanda proses child-worker")
-	
 	flag.Parse()
 
-	// 1. HANDLER: --version
+	// if logPath != "" {
+	// 	if err := logger.OpenFile(logPath); err != nil {
+	// 		fmt.Printf("Gagal membuka file log: %v\n", err)
+	// 		os.Exit(1)
+	// 	}
+	// }
+
 	if showVersion {
 		fmt.Printf("Q-SSH-WORKER\n")
 		fmt.Printf("Version : %s\n", version.Version)
@@ -45,10 +56,8 @@ func main() {
 		os.Exit(0)
 	}
 
-	// 2. HANDLER: --check
 	if checkPath != "" {
-		_, err := config.Load(checkPath)
-		if err != nil {
+		if _, err := config.Load(checkPath); err != nil {
 			fmt.Printf("[CHECK ERROR] File konfigurasi kotor/invalid: %v\n", err)
 			os.Exit(1)
 		}
@@ -56,9 +65,6 @@ func main() {
 		os.Exit(0)
 	}
 
-	// ======================================================================
-	// 🟢 HANDLER UTAMA: --show-endpoint (UNTUK KEBUTUHAN IP ROUTING BYPASS)
-	// ======================================================================
 	if showEndpointPath != "" {
 		cfg, err := config.Load(showEndpointPath)
 		if err != nil {
@@ -66,7 +72,6 @@ func main() {
 			os.Exit(1)
 		}
 
-		// Cari IP asli dari Domain SSH Host via DNS Lookup internal
 		ips, err := net.LookupIP(cfg.SSH.Host)
 		if err != nil {
 			fmt.Printf("[ERROR] Gagal resolve DNS host %s: %v\n", cfg.SSH.Host, err)
@@ -80,18 +85,15 @@ func main() {
 				break
 			}
 		}
-
 		if targetIP == "" {
 			fmt.Println("[ERROR] IP IPv4 tidak ditemukan untuk host tersebut.")
 			os.Exit(1)
 		}
 
-		// Cetak string bersih mentah agar mudah di-grep / di-parse oleh script routing LuCI
 		fmt.Printf("%s\n", targetIP)
-		os.Exit(0) // Langsung exit aman tanpa dial ke network
+		os.Exit(0)
 	}
 
-	// 3. HANDLER: --dial (Proses Normal Kerja Core)
 	if dialPath == "" {
 		fmt.Println("Gunakan perintah:")
 		fmt.Println("  ./Q-SSH-WORKER --dial <file.json>")
@@ -109,17 +111,30 @@ func main() {
 		debug.Enable = true
 	}
 
-	// ======================================================================
-	// 🟢 LOGIKA AUTONOMOUS WORKER MANAGEMENT (SINGLE VS MULTI)
-	// ======================================================================
-	
-	// Jalur A: Jika bertindak sebagai Child, ATAU user menonaktifkan fitur concurrency di JSON
-	// 🔄 UBAH: dari cfg.Concurrency.Enable menjadi cfg.Worker.Enable
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	// Jalur A: satu worker di proses ini (child, atau concurrency nonaktif).
 	if isChild || !cfg.Worker.Enable {
-		if err := worker.StartWorker(cfg); err != nil {
+		if env := os.Getenv("QTUN_TARGET_PORT"); env != "" {
+			var p int
+			if _, err := fmt.Sscanf(env, "%d", &p); err == nil && p > 0 && p <= 65535 {
+				cfg.Listen.Port = p
+			}
+		}
+		port := cfg.Listen.Port
+
+		err := worker.Supervise(ctx, cfg, worker.SuperviseOptions{
+			MaxReconnect: 0,
+			OnStatus: func(healthy bool, msg string) {
+				logger.Status("[STATUS] Port: %d (%s)", port, msg)
+			},
+			Logf: func(format string, args ...any) {
+				logger.Status("[SUP] "+format, args...)
+			},
+		})
+		if err != nil {
 			fmt.Printf("Worker Error: %v\n", err)
-			
-			// Cek apakah error merupakan kegagalan otentikasi SSH
 			if strings.Contains(err.Error(), "Auth Failed") {
 				os.Exit(5)
 			}
@@ -128,8 +143,7 @@ func main() {
 		return
 	}
 
-	// Jalur B: Jika bertindak sebagai Master Manager (Concurrency aktif & --child tidak dipanggil)
-	// 🔄 UBAH: dari cfg.Concurrency.Workers menjadi cfg.Worker.Workers
+	// Jalur B: master manager, spawn satu child per port.
 	fmt.Printf("👑 Q-SSH-WORKER bertindak sebagai Master Manager (Menjaga %d Workers)\n", cfg.Worker.Workers)
 
 	binPath, err := os.Executable()
@@ -138,51 +152,51 @@ func main() {
 		os.Exit(1)
 	}
 
-	// 🔄 UBAH: dari cfg.Concurrency.Workers menjadi cfg.Worker.Workers
 	for i := 0; i < cfg.Worker.Workers; i++ {
-		// 🔄 UBAH: dari cfg.Concurrency.StartPort menjadi cfg.Worker.StartPort
-		targetPort := cfg.Worker.StartPort + i
+		port := cfg.Worker.StartPort + i
+		go superviseChild(ctx, binPath, dialPath, forceDebug, port)
 
-		// Eksekusi monitoring pararel per port
-		go func(port int) {
-			for {
-				fmt.Printf("[MASTER] Spawning Child Worker untuk mendengarkan port %d...\n", port)
-
-				args := []string{"--dial", dialPath, "--child"}
-				if forceDebug {
-					args = append(args, "--debug")
-				}
-				
-				cmd := exec.Command(binPath, args...)
-				cmd.Env = append(os.Environ(), fmt.Sprintf("QTUN_TARGET_PORT=%d", port))
-				
-                cmd.Stdout = os.Stdout
-                cmd.Stderr = os.Stderr
-
-                // 🟢 Tangkap error hasil run proses anak
-                err := cmd.Run()
-                if err != nil {
-                    // Cek apakah anak sengaja keluar dengan kode khusus (ExitError)
-                    if exitError, ok := err.(*exec.ExitError); ok {
-                        // Ambil status exit code biner anak
-                        if status, ok := exitError.Sys().(interface{ ExitStatus() int }); ok {
-                            if status.ExitStatus() == 5 {
-                                fmt.Printf("\n❌ [MASTER] Menangkap kode 5. Menghentikan seluruh Master Manager karena kredensial expired/salah!\n")
-                                os.Exit(1) // Matikan Master secara total
-                            }
-                        }
-                    }
-                }
-
-                fmt.Printf("⚠️ Worker port %d terputus gantung (EOF/Mati)! Membangunkan ulang dalam 3 detik...\n", port)
-                time.Sleep(3 * time.Second) // Jeda napas anti-looper sebelum spawn ulang
-			}
-		}(targetPort)
-
-		// Beri jeda antar spawn awal agar jabat tangan SSH ke VPS mengantre tertib
+		// Jeda antar spawn awal agar jabat tangan SSH mengantre tertib.
 		time.Sleep(3 * time.Second)
 	}
 
-	// Menahan proses Master utama agar tetap hidup mengawal anak-anaknya di background
-	select {}
+	<-ctx.Done()
+}
+
+// superviseChild menjalankan satu child. Exit code 5 (auth salah) menghentikan
+// seluruh master. Exit lain dijalankan ulang setelah jeda, sebagai pengaman
+// kalau child sendiri berhenti.
+func superviseChild(ctx context.Context, binPath, dialPath string, forceDebug bool, port int) {
+	for ctx.Err() == nil {
+		fmt.Printf("[MASTER] Spawning Child Worker untuk mendengarkan port %d...\n", port)
+
+		args := []string{"--dial", dialPath, "--child"}
+		if forceDebug {
+			args = append(args, "--debug")
+		}
+
+		cmd := exec.CommandContext(ctx, binPath, args...)
+		cmd.Env = append(os.Environ(), fmt.Sprintf("QTUN_TARGET_PORT=%d", port))
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+
+		err := cmd.Run()
+		if ctx.Err() != nil {
+			return
+		}
+
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			if status, ok := exitErr.Sys().(interface{ ExitStatus() int }); ok && status.ExitStatus() == 5 {
+				fmt.Printf("\n❌ [MASTER] Menangkap kode 5. Menghentikan seluruh Master Manager karena kredensial expired/salah!\n")
+				os.Exit(1)
+			}
+		}
+
+		fmt.Printf("⚠️ Worker port %d berhenti, dijalankan ulang dalam 3 detik...\n", port)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(3 * time.Second):
+		}
+	}
 }

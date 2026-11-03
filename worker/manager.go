@@ -21,8 +21,16 @@ func StartWorker(cfg *config.Config) error {
 	return StartWorkerContext(context.Background(), cfg)
 }
 
-// StartWorkerContext memungkinkan pemanggil menghentikan worker.
+// StartWorkerContext menjalankan SATU sesi SSH. Saat sesi putus, fungsi ini
+// mengembalikan error. Untuk reconnect otomatis gunakan Supervise.
 func StartWorkerContext(ctx context.Context, cfg *config.Config) error {
+	return runSession(ctx, cfg)
+}
+
+// runSession: satu sesi lengkap (dial, transport, SSH, SOCKS).
+// Dial awal diulang sampai berhasil atau ctx dibatalkan; batas percobaan
+// ditentukan oleh Supervise lewat ReadyTimeout.
+func runSession(ctx context.Context, cfg *config.Config) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -178,25 +186,27 @@ func StartWorkerContext(ctx context.Context, cfg *config.Config) error {
 		socksErrChan <- socks.ListenAndServeContext(ctx, cfg, client)
 	}()
 
-	healthCtx, cancelHealth := context.WithCancel(ctx)
-	defer cancelHealth()
-
-	healthFailChan := make(chan bool, 1)
-	go MonitorHealth(healthCtx, client, healthFailChan)
+	// Sesi dianggap putus saat SSH client tertutup (koneksi mati, server
+	// menutup sesi, atau keepalive gagal). Ini pengganti MonitorHealth.
+	sshDone := make(chan error, 1)
+	go func() {
+		sshDone <- client.Wait()
+	}()
 
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
+
+	case err := <-sshDone:
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return fmt.Errorf("ssh session putus: %v", err)
 
 	case err := <-socksErrChan:
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		return fmt.Errorf("socks5 server stopped: %v", err)
-
-	case <-healthFailChan:
-		return fmt.Errorf(
-			"koneksi internet mati gantung dideteksi oleh health monitor",
-		)
 	}
 }

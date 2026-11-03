@@ -1,6 +1,9 @@
 package debug
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 var Enable = false
 
@@ -10,10 +13,16 @@ func Println(a ...any) {
 	}
 }
 
+// Printf mencetak detail debug. Newline ditambahkan otomatis bila format
+// belum diakhiri baris baru, sehingga pemanggil tidak perlu mengingatnya.
 func Printf(format string, a ...any) {
-	if Enable {
-		fmt.Printf(format, a...)
+	if !Enable {
+		return
 	}
+	if !strings.HasSuffix(format, "\n") {
+		format += "\n"
+	}
+	fmt.Printf(format, a...)
 }
 
 func Separator() {
