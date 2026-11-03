@@ -114,12 +114,6 @@ func runSession(ctx context.Context, cfg *config.Config) error {
 	conn = wrappedConn
 
 	if cfg.Proxy.Host != "" {
-		debug.Proxy(
-			cfg.Proxy.Host,
-			cfg.Proxy.Port,
-			cfg.SSH.Host,
-			cfg.SSH.Port,
-		)
 		logger.ProxyConnected()
 	}
 

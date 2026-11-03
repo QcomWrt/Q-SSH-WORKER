@@ -20,10 +20,6 @@ func Response(
 		return
 	}
 
-	Separator()
-
-	Println("========== RESPONSE ==========")
-
 	Printf(
 		"%s %d %s\n",
 		version,
@@ -46,6 +42,4 @@ func Response(
 			headers[k],
 		)
 	}
-
-	Println("==============================")
 }

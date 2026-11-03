@@ -40,8 +40,8 @@ func Inject(cfg *config.Config, conn net.Conn) (net.Conn, error) {
 
 	logger.PayloadSending()
 
-	debug.Println("\n[PART 1 - SENT TO PROXY]")
-	debug.Println(firstPart)
+	// debug.Println("\n[PART 1 - SENT TO PROXY]")
+	debug.Payload(firstPart)
 
 	// 3. Kirim potongan pertama (GET / ...) murni ke jaringan
 	if _, err := conn.Write([]byte(firstPart)); err != nil {

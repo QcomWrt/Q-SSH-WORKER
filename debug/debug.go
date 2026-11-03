@@ -30,3 +30,11 @@ func Separator() {
 		fmt.Println()
 	}
 }
+// Line mencetak satu baris debug dengan prefix [DEBUG].
+// Line mencetak satu baris debug. Newline ditambahkan otomatis.
+func Line(format string, a ...any) {
+	if !Enable {
+		return
+	}
+	fmt.Printf(format+"\n", a...)
+}

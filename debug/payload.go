@@ -1,14 +1,17 @@
 package debug
 
-func Payload(payload string) {
+import (
+	"fmt"
+	"strings"
+)
 
+// Payload mencetak payload dalam satu baris, dengan \r dan \n
+// ditampilkan sebagai teks (seperti tampilan HTTP Custom).
+func Payload(payload string) {
 	if !Enable {
 		return
 	}
-
-	Separator()
-
-	Println("========== PAYLOAD ==========")
-	Println(payload)
-	Println("=============================")
+	line := strings.ReplaceAll(payload, "\r", `\r`)
+	line = strings.ReplaceAll(line, "\n", `\n`)
+	fmt.Println(line)
 }
