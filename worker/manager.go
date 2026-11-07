@@ -14,6 +14,7 @@ import (
 	"github.com/QcomWrt/Q-SSH-WORKER/socks"
 	workerssh "github.com/QcomWrt/Q-SSH-WORKER/ssh"
 	"github.com/QcomWrt/Q-SSH-WORKER/transport"
+	"github.com/QcomWrt/Q-SSH-WORKER/transport/dns"
 )
 
 // API lama tetap tersedia untuk kompatibilitas OpenWrt.
@@ -40,12 +41,22 @@ func runSession(ctx context.Context, cfg *config.Config) error {
 		30*time.Second,
 	)
 
-	n, err := network.New(cfg)
-	if err != nil {
-		return fmt.Errorf("network init failed: %w", err)
+	useDNS := cfg.DNS.Enabled()
+
+	// Jalur TCP/WS/WSS hanya membutuhkan network.Network.
+	// Jalur SlowDNS tidak memakainya, jadi kesalahan init TCP tidak ikut memengaruhi.
+	var n network.Network
+	if !useDNS {
+		var err error
+		n, err = network.New(cfg)
+		if err != nil {
+			return fmt.Errorf("network init failed: %w", err)
+		}
 	}
 
-	if cfg.Proxy.Host != "" {
+	if useDNS {
+		logger.SlowDNSConnecting(cfg.DNS.Nameserver, cfg.DNS.TargetDomain)
+	} else if cfg.Proxy.Host != "" {
 		logger.ProxyConnecting()
 	} else {
 		logger.TCPConnecting()
@@ -53,6 +64,7 @@ func runSession(ctx context.Context, cfg *config.Config) error {
 
 	// 1. Dial awal yang dapat dibatalkan.
 	var conn net.Conn
+	var err error
 
 	for {
 		if err := ctx.Err(); err != nil {
@@ -60,7 +72,11 @@ func runSession(ctx context.Context, cfg *config.Config) error {
 		}
 
 		dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		conn, err = n.Dial(dialCtx)
+		if useDNS {
+			conn, err = dns.Dial(dialCtx, cfg)
+		} else {
+			conn, err = n.Dial(dialCtx)
+		}
 		cancel()
 
 		if err == nil {
@@ -105,16 +121,22 @@ func runSession(ctx context.Context, cfg *config.Config) error {
 	workerStats := &TrafficStats{}
 	conn = NewObservedConn(conn, workerStats)
 
-	wrappedConn, err := transport.Wrap(cfg, conn)
-	if err != nil {
-		_ = conn.Close()
-		logger.ProxyError(err)
-		return err
-	}
-	conn = wrappedConn
+	// SlowDNS sudah terenkripsi di dalam conn (lewat transport/dns),
+	// jadi transport.Wrap dilewati. Jalur WS/WSS tetap seperti biasa.
+	if useDNS {
+		logger.SlowDNSConnected()
+	} else {
+		wrappedConn, err := transport.Wrap(cfg, conn)
+		if err != nil {
+			_ = conn.Close()
+			logger.ProxyError(err)
+			return err
+		}
+		conn = wrappedConn
 
-	if cfg.Proxy.Host != "" {
-		logger.ProxyConnected()
+		if cfg.Proxy.Host != "" {
+			logger.ProxyConnected()
+		}
 	}
 
 	if err := ctx.Err(); err != nil {
@@ -147,19 +169,28 @@ func runSession(ctx context.Context, cfg *config.Config) error {
 
 	logger.SSHConnected()
 
-	remoteIP := cfg.SSH.Host
-	if ips, lookupErr := net.LookupIP(cfg.SSH.Host); lookupErr == nil {
-		for _, ip := range ips {
-			if ip.To4() != nil {
-				remoteIP = ip.String()
-				break
+	// Alamat remote untuk log. SlowDNS memakai nameserver dan domain,
+	// karena host SSH sering tidak bisa di-resolve langsung dari jalur ini.
+	var remoteAddrStr string
+	netType := cfg.Network.Type
+	if useDNS {
+		remoteAddrStr = fmt.Sprintf("%s (%s)", cfg.DNS.Nameserver, cfg.DNS.TargetDomain)
+		netType = "udp/slowdns"
+	} else {
+		remoteIP := cfg.SSH.Host
+		if ips, lookupErr := net.LookupIP(cfg.SSH.Host); lookupErr == nil {
+			for _, ip := range ips {
+				if ip.To4() != nil {
+					remoteIP = ip.String()
+					break
+				}
 			}
 		}
+		remoteAddrStr = fmt.Sprintf("%s:%d", remoteIP, cfg.SSH.Port)
 	}
 
-	remoteAddrStr := fmt.Sprintf("%s:%d", remoteIP, cfg.SSH.Port)
 	debug.SSHNetworkDetails(
-		cfg.Network.Type,
+		netType,
 		remoteAddrStr,
 		conn.RemoteAddr(),
 		conn.LocalAddr(),
@@ -180,8 +211,7 @@ func runSession(ctx context.Context, cfg *config.Config) error {
 		socksErrChan <- socks.ListenAndServeContext(ctx, cfg, client)
 	}()
 
-	// Sesi dianggap putus saat SSH client tertutup (koneksi mati, server
-	// menutup sesi, atau keepalive gagal). Ini pengganti MonitorHealth.
+	// Sesi dianggap putus saat SSH client tertutup.
 	sshDone := make(chan error, 1)
 	go func() {
 		sshDone <- client.Wait()

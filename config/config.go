@@ -9,4 +9,5 @@ type Config struct {
     Payload   Payload   `json:"payload"`
     // Mengikat struct Worker (dari worker.go) ke tag JSON "concurrency"
     Worker    Worker    `json:"concurrency"` 
+    DNS       DNS       `json:"dns"`
 }

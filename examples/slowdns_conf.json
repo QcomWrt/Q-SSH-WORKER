@@ -1,0 +1,48 @@
+{
+  "listen": {
+    "host": "127.0.0.1",
+    "port": 1080
+  },
+
+  "concurrency": {
+    "worker_count": 1,
+    "port_mode": "auto"
+  },
+
+  "ssh": {
+    "host": "YOUR_SSH_HOST",
+    "port": 80,
+    "username": "YOUR_USERNAME",
+    "password": "YOUR_PASSWORD"
+  },
+
+  "network": {
+    "type": "tcp"
+  },
+
+  "dns": {
+    "nameserver": "1.1.1.1",
+    "target_domain": "YOUR_NS_DOMAIN",
+    "pubkey": "YOUR_64_HEX_PUBKEY",
+    "query_type": "TXT"
+  },
+
+  "transport": {
+    "tls": false,
+    "host": "",
+    "path": "",
+    "sni": ""
+  },
+
+  "proxy": {
+    "enable": false,
+    "host": "",
+    "port": 0
+  },
+
+  "payload": {
+    "enable": false,
+    "request": "",
+    "expect": []
+  }
+}
