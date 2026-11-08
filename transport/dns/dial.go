@@ -73,7 +73,7 @@ func Dial(ctx context.Context, cfg *config.Config) (net.Conn, error) {
 		return nil, err
 	}
 
-	pconn := NewDNSPacketConn(udpConn, remoteAddr, domain)
+	pconn := NewDNSPacketConn(udpConn, remoteAddr, domain, cfg.DNS.QueryType)
 
 	kcpConn, err := kcp.NewConn2(remoteAddr, nil, 0, 0, pconn)
 	if err != nil {

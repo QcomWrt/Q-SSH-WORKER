@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"time"
 
 	dnstt "github.com/QcomWrt/Q-SSH-WORKER/transport/dns/internal/dns"
@@ -17,39 +18,41 @@ import (
 )
 
 const (
-	// Jumlah byte padding acak di setiap query. Harus sama dengan dnstt-client.
-	numPadding = 3
-	// Padding tambahan untuk polling kosong, supaya tidak kena cache resolver.
+	numPadding        = 3
 	numPaddingForPoll = 8
 
 	initPollDelay       = 500 * time.Millisecond
 	maxPollDelay        = 10 * time.Second
 	pollDelayMultiplier = 2.0
 
-	// Batas poll kosong yang boleh dikirim sebagai respons atas data masuk.
 	pollLimit = 16
+
+	rrTypeNULL uint16 = 10
 )
 
-// base32Encoding adalah base32 tanpa padding.
 var base32Encoding = base32.StdEncoding.WithPadding(base32.NoPadding)
 
-// DNSPacketConn menyediakan antarmuka kirim dan terima paket di atas DNS.
-// Paket dikodekan ke nama DNS pada query (upstream), dan ke TXT pada balasan
-// (downstream). Pengiriman UDP sebenarnya dilakukan oleh transport.
+// DNSPacketConn menyediakan kirim dan terima paket di atas DNS.
+// queryType menentukan tipe record query: "NULL" atau "TXT" (default TXT).
 type DNSPacketConn struct {
 	clientID turbotunnel.ClientID
 	domain   dnstt.Name
+	qtype    uint16
 	pollChan chan struct{}
 	*turbotunnel.QueuePacketConn
 }
 
-// NewDNSPacketConn membuat DNSPacketConn. transport adalah socket UDP tempat
-// query dikirim dan balasan diterima. addr adalah alamat resolver.
-func NewDNSPacketConn(transport net.PacketConn, addr net.Addr, domain dnstt.Name) *DNSPacketConn {
+func NewDNSPacketConn(transport net.PacketConn, addr net.Addr, domain dnstt.Name, queryType string) *DNSPacketConn {
+	var qt uint16 = uint16(dnstt.RRTypeTXT)
+	if strings.EqualFold(queryType, "NULL") {
+		qt = rrTypeNULL
+	}
+
 	clientID := turbotunnel.NewClientID()
 	c := &DNSPacketConn{
 		clientID:        clientID,
 		domain:          domain,
+		qtype:           qt,
 		pollChan:        make(chan struct{}, pollLimit),
 		QueuePacketConn: turbotunnel.NewQueuePacketConn(clientID, 0),
 	}
@@ -66,8 +69,8 @@ func NewDNSPacketConn(transport net.PacketConn, addr net.Addr, domain dnstt.Name
 	return c
 }
 
-// dnsResponsePayload mengambil payload downstream dari balasan DNS.
-// Mengembalikan nil jika format tidak sesuai.
+// dnsResponsePayload mengambil payload downstream dari balasan.
+// TXT: string digabung dan didekode. NULL: data mentah di RDATA.
 func dnsResponsePayload(resp *dnstt.Message, domain dnstt.Name) []byte {
 	if resp.Flags&0x8000 != 0x8000 {
 		return nil
@@ -83,17 +86,21 @@ func dnsResponsePayload(resp *dnstt.Message, domain dnstt.Name) []byte {
 	if _, ok := answer.Name.TrimSuffix(domain); !ok {
 		return nil
 	}
-	if answer.Type != dnstt.RRTypeTXT {
+
+	switch uint16(answer.Type) {
+	case uint16(dnstt.RRTypeTXT):
+		payload, err := dnstt.DecodeRDataTXT(answer.Data)
+		if err != nil {
+			return nil
+		}
+		return payload
+	case rrTypeNULL:
+		return answer.Data
+	default:
 		return nil
 	}
-	payload, err := dnstt.DecodeRDataTXT(answer.Data)
-	if err != nil {
-		return nil
-	}
-	return payload
 }
 
-// nextPacket membaca satu paket dengan prefix panjang 2 byte.
 func nextPacket(r *bytes.Reader) ([]byte, error) {
 	var n uint16
 	if err := binary.Read(r, binary.BigEndian, &n); err != nil {
@@ -107,8 +114,6 @@ func nextPacket(r *bytes.Reader) ([]byte, error) {
 	return p, err
 }
 
-// recvLoop menerima balasan DNS, memecahnya menjadi paket, dan memasukkannya
-// ke antrean masuk. Jika ada data, polling segera diizinkan.
 func (c *DNSPacketConn) recvLoop(transport net.PacketConn) error {
 	for {
 		var buf [4096]byte
@@ -116,14 +121,20 @@ func (c *DNSPacketConn) recvLoop(transport net.PacketConn) error {
 		if err != nil {
 			return err
 		}
+		debug.Printf("[SLOWDNS DEBUG] Terima %d bytes dari %v", n, addr)
 
 		resp, err := dnstt.MessageFromWireFormat(buf[:n])
 		if err != nil {
-			debug.Printf("[SLOWDNS DEBUG] MessageFromWireFormat: %v", err)
+			debug.Printf("[SLOWDNS DEBUG] Balasan tidak bisa di-parse: %v", err)
 			continue
 		}
 
 		payload := dnsResponsePayload(&resp, c.domain)
+		if payload == nil {
+			debug.Printf("[SLOWDNS DEBUG] Balasan tanpa payload valid: rcode=%d answers=%d type=%v",
+				resp.Flags&0x000f, len(resp.Answer), typeOf(resp))
+			continue
+		}
 
 		r := bytes.NewReader(payload)
 		found := false
@@ -133,6 +144,7 @@ func (c *DNSPacketConn) recvLoop(transport net.PacketConn) error {
 				break
 			}
 			found = true
+			debug.Printf("[SLOWDNS DEBUG] Paket downstream %d bytes", len(p))
 			c.QueuePacketConn.QueueIncoming(p, addr)
 		}
 
@@ -145,7 +157,14 @@ func (c *DNSPacketConn) recvLoop(transport net.PacketConn) error {
 	}
 }
 
-// chunks memecah p menjadi potongan maksimal n byte.
+// typeOf mengembalikan tipe RR pertama balasan, untuk log saja.
+func typeOf(resp dnstt.Message) uint16 {
+	if len(resp.Answer) > 0 {
+		return uint16(resp.Answer[0].Type)
+	}
+	return 0
+}
+
 func chunks(p []byte, n int) [][]byte {
 	var result [][]byte
 	for len(p) > 0 {
@@ -159,9 +178,6 @@ func chunks(p []byte, n int) [][]byte {
 	return result
 }
 
-// send mengirim p sebagai satu query DNS. Panjang p harus kurang dari 224 byte.
-// Format: ClientID | prefix padding | [panjang | data], lalu base32 lowercase,
-// dipecah per 63 karakter, dan ditambah domain.
 func (c *DNSPacketConn) send(transport net.PacketConn, p []byte, addr net.Addr) error {
 	if len(p) >= 224 {
 		return fmt.Errorf("paket terlalu panjang: %d", len(p))
@@ -199,15 +215,14 @@ func (c *DNSPacketConn) send(transport net.PacketConn, p []byte, addr net.Addr) 
 	binary.Read(rand.Reader, binary.BigEndian, &id)
 	query := &dnstt.Message{
 		ID:    id,
-		Flags: 0x0100, // QR = 0, RD = 1
+		Flags: 0x0100,
 		Question: []dnstt.Question{
 			{
 				Name:  name,
-				Type:  dnstt.RRTypeTXT,
+				Type:  c.qtype,
 				Class: dnstt.ClassIN,
 			},
 		},
-		// EDNS(0)
 		Additional: []dnstt.RR{
 			{
 				Name:  dnstt.Name{},
@@ -224,11 +239,14 @@ func (c *DNSPacketConn) send(transport net.PacketConn, p []byte, addr net.Addr) 
 	}
 
 	_, err = transport.WriteTo(buf, addr)
-	return err
+	if err != nil {
+		debug.Printf("[SLOWDNS DEBUG] Kirim query gagal: %v", err)
+		return err
+	}
+	debug.Printf("[SLOWDNS DEBUG] Kirim query %d bytes (type=%d)", len(buf), c.qtype)
+	return nil
 }
 
-// sendLoop mengambil paket keluar dan mengirimnya. Jika tidak ada data,
-// mengirim poll kosong sesuai jadwal atau saat diminta pollChan.
 func (c *DNSPacketConn) sendLoop(transport net.PacketConn, addr net.Addr) error {
 	pollDelay := initPollDelay
 	pollTimer := time.NewTimer(pollDelay)
