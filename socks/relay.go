@@ -1,4 +1,3 @@
-
 package socks
 
 import (
@@ -6,6 +5,8 @@ import (
 	"io"
 	"net"
 	"sync"
+
+	qdebug "github.com/QcomWrt/Q-SSH-WORKER/debug"
 )
 
 // Relay mempertahankan API lama untuk kompatibilitas OpenWrt.
@@ -13,11 +14,21 @@ func Relay(client net.Conn, remote net.Conn) {
 	RelayContext(context.Background(), client, remote)
 }
 
-// RelayContext melakukan relay bidirectional dan menghentikan kedua
-// arah transfer ketika context dibatalkan atau salah satu arah selesai.
+type closeWriter interface {
+	CloseWrite() error
+}
+
+type copyResult struct {
+	dir string
+	n   int64
+	err error
+}
+
+// RelayContext melakukan relay dua arah. Saat klien selesai mengirim,
+// hanya arah tulis ke remote yang ditutup. Saat remote selesai (atau
+// error), kedua sisi ditutup.
 func RelayContext(ctx context.Context, client net.Conn, remote net.Conn) {
 	var closeOnce sync.Once
-
 	closeBoth := func() {
 		closeOnce.Do(func() {
 			_ = client.Close()
@@ -25,37 +36,48 @@ func RelayContext(ctx context.Context, client net.Conn, remote net.Conn) {
 		})
 	}
 
-	// Membuka blokir io.Copy saat context dibatalkan.
 	stopClose := context.AfterFunc(ctx, closeBoth)
 	defer stopClose()
 	defer closeBoth()
 
-	errChan := make(chan error, 2)
+	done := make(chan copyResult, 2)
 
 	go func() {
-		_, err := io.Copy(remote, client)
-		errChan <- err
+		n, err := io.Copy(remote, client)
+		done <- copyResult{"client->remote", n, err}
 	}()
 
 	go func() {
-		_, err := io.Copy(client, remote)
-		errChan <- err
+		n, err := io.Copy(client, remote)
+		done <- copyResult{"remote->client", n, err}
 	}()
 
-	// Tunggu arah transfer pertama selesai.
+	var first copyResult
 	select {
 	case <-ctx.Done():
-	case <-errChan:
+		qdebug.Printf("[SOCKS DEBUG] relay dibatalkan oleh context")
+		return
+	case first = <-done:
 	}
 
-	// Memutus kedua socket agar arah transfer lainnya tidak tertinggal.
-	closeBoth()
+	qdebug.Printf("[SOCKS DEBUG] relay selesai arah=%s bytes=%d err=%v",
+		first.dir, first.n, first.err)
 
-	// Tunggu goroutine kedua menyelesaikan io.Copy.
-	select {
-	case <-errChan:
-	case <-ctx.Done():
-		// Socket sudah ditutup; context yang dibatalkan tidak perlu
-		// membuat fungsi menunggu selamanya.
+	// Klien selesai mengirim dan tanpa error: beri tahu remote lewat
+	// half-close, lalu tunggu arah balasan selesai.
+	if first.dir == "client->remote" && first.err == nil {
+		if cw, ok := remote.(closeWriter); ok {
+			_ = cw.CloseWrite()
+		}
+
+		select {
+		case second := <-done:
+			qdebug.Printf("[SOCKS DEBUG] relay selesai arah=%s bytes=%d err=%v",
+				second.dir, second.n, second.err)
+		case <-ctx.Done():
+		}
+		return
 	}
+
+	// Remote menutup (EOF) atau error: tutup keduanya.
 }

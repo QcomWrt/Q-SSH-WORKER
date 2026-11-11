@@ -45,18 +45,39 @@ type SuperviseOptions struct {
 	Logf func(format string, args ...any)
 }
 
-func (o SuperviseOptions) withDefaults() SuperviseOptions {
+func (o SuperviseOptions) withDefaults(cfg *config.Config) SuperviseOptions {
+	isSlowDNS := false
+	if cfg != nil {
+		isSlowDNS = cfg.DNS.Enabled()
+	}
+
 	if o.ReadyTimeout <= 0 {
-		o.ReadyTimeout = 20 * time.Second
+		if isSlowDNS {
+			o.ReadyTimeout = 30 * time.Second
+		} else {
+			o.ReadyTimeout = 20 * time.Second
+		}
 	}
 	if o.ProbeInterval <= 0 {
-		o.ProbeInterval = 5 * time.Second
+		if isSlowDNS {
+			o.ProbeInterval = 15 * time.Second // Jeda longgar untuk SlowDNS
+		} else {
+			o.ProbeInterval = 5 * time.Second  // Jeda cepat untuk TCP biasa
+		}
 	}
 	if o.ProbeTimeout <= 0 {
-		o.ProbeTimeout = 10 * time.Second
+		if isSlowDNS {
+			o.ProbeTimeout = 15 * time.Second // Timeout longgar RTT SlowDNS
+		} else {
+			o.ProbeTimeout = 10 * time.Second
+		}
 	}
 	if o.MaxProbeFails <= 0 {
-		o.MaxProbeFails = 3
+		if isSlowDNS {
+			o.MaxProbeFails = 5 // Toleransi 5x gagal berturut-turut untuk SlowDNS
+		} else {
+			o.MaxProbeFails = 3
+		}
 	}
 	if o.StableAfter <= 0 {
 		o.StableAfter = 60 * time.Second
@@ -80,7 +101,7 @@ func (o SuperviseOptions) withDefaults() SuperviseOptions {
 // sesi putus, dengan port yang sama. Berhenti saat ctx dibatalkan (nil),
 // atau saat reconnect sudah mencapai MaxReconnect (error).
 func Supervise(ctx context.Context, cfg *config.Config, o SuperviseOptions) error {
-	o = o.withDefaults()
+	o = o.withDefaults(cfg)
 	port := cfg.Listen.Port
 
 	failures := 0
@@ -140,7 +161,15 @@ func runWithProbe(
 		done <- runSession(sctx, cfg)
 	}()
 
-	// Tunggu sampai probe lolos, sesi berhenti, atau batas waktu habis.
+	// Tentukan metode probe berdasarkan status cfg.DNS.Enabled()
+	isSlowDNS := cfg.DNS.Enabled()
+	probeFunc := func() error {
+		if isSlowDNS {
+			return ProbeSOCKSLocal(port, o.ProbeTimeout)
+		}
+		return ProbeSOCKS(port, o.ProbeTimeout)
+	}
+
 	deadline := time.After(o.ReadyTimeout)
 	tick := time.NewTicker(time.Second)
 	defer tick.Stop()
@@ -157,7 +186,7 @@ readyLoop:
 			return false, started, fmt.Errorf("belum siap dalam %v", o.ReadyTimeout)
 
 		case <-tick.C:
-			if ProbeSOCKS(port, o.ProbeTimeout) == nil {
+			if probeFunc() == nil {
 				break readyLoop
 			}
 		}
@@ -166,7 +195,6 @@ readyLoop:
 	o.OnStatus(true, "terhubung")
 	defer o.OnStatus(false, "terputus")
 
-	// Pantau sesi yang sudah sehat.
 	t := time.NewTicker(o.ProbeInterval)
 	defer t.Stop()
 
@@ -177,7 +205,7 @@ readyLoop:
 			return true, started, err
 
 		case <-t.C:
-			if err := ProbeSOCKS(port, o.ProbeTimeout); err != nil {
+			if err := probeFunc(); err != nil {
 				fails++
 				debug.Printf("worker %d probe gagal (%d/%d): %v",
 					port, fails, o.MaxProbeFails, err)
@@ -194,8 +222,34 @@ readyLoop:
 	}
 }
 
-// ProbeSOCKS mengecek SOCKS5 lokal: greeting lalu CONNECT ke example.com:443.
-// Mengembalikan error yang menyebut tahap yang gagal.
+// ProbeSOCKSLocal mengecek kesehatan server SOCKS5 lokal dengan melakukan greeting handshake saja.
+// Cara ini sangat aman untuk SlowDNS karena tidak membebani tunnel dengan traffic remote outbound.
+func ProbeSOCKSLocal(port int, timeout time.Duration) error {
+	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+	conn, err := net.DialTimeout("tcp", addr, timeout)
+	if err != nil {
+		return fmt.Errorf("dial local SOCKS5: %w", err)
+	}
+	defer conn.Close()
+
+	_ = conn.SetDeadline(time.Now().Add(timeout))
+
+	// Kirim greeting SOCKS5 (No Authentication Required)
+	if _, err = conn.Write([]byte{0x05, 0x01, 0x00}); err != nil {
+		return fmt.Errorf("greeting tulis: %w", err)
+	}
+	var greeting [2]byte
+	if _, err = io.ReadFull(conn, greeting[:]); err != nil {
+		return fmt.Errorf("greeting baca: %w", err)
+	}
+	if greeting[0] != 0x05 || greeting[1] != 0x00 {
+		return fmt.Errorf("greeting ditolak: %v", greeting)
+	}
+	return nil
+}
+
+// ProbeSOCKS mengecek SOCKS5 lengkap hingga CONNECT ke example.com:443.
+// Tetap disediakan untuk pengujian mode SSH biasa (TCP Direct/Payload/SNI).
 func ProbeSOCKS(port int, timeout time.Duration) error {
 	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
 	conn, err := net.DialTimeout("tcp", addr, timeout)

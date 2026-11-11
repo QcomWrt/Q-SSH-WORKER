@@ -13,11 +13,10 @@ import (
 )
 
 const (
-	// keepaliveInterval: jeda antar keepalive SSH ke server.
-	keepaliveInterval = 5 * time.Second
-	// keepaliveTimeout: batas menunggu balasan keepalive.
-	// Sesi dianggap mati kalau tidak ada balasan dalam batas ini.
-	keepaliveTimeout = 5 * time.Second
+	// Default nilai parameter Keep-Alive untuk SSH mode biasa (TCP Direct/Payload/SNI)
+	keepaliveInterval = 15 * time.Second
+	keepaliveTimeout  = 30 * time.Second
+	maxKeepaliveFails = 3
 )
 
 // errKeepaliveTimeout dipakai saat server tidak membalas keepalive.
@@ -69,35 +68,52 @@ func Dial(cfg *config.Config, conn net.Conn) (*gossh.Client, error) {
 
 	client := gossh.NewClient(cc, chans, reqs)
 
-	// Keepalive: deteksi sesi mati lebih cepat daripada probe SOCKS.
-	go keepAlive(client)
+	// PISAHKAN LOGIKA KEEPALIVE:
+	// Mode SSH Biasa (TCP Direct/Payload/SNI) -> Jalankan keepAlive agar socket idle tidak diputus ISP.
+	// Mode SlowDNS (cfg.DNS.Enabled() == true) -> Nonaktifkan SSH Keep-Alive untuk cegah false disconnect saat stream data besar.
+	if !cfg.DNS.Enabled() {
+		go keepAlive(client)
+	} else {
+		debug.Printf("[SSH DEBUG] SSH Keep-Alive dinonaktifkan khusus untuk transport SlowDNS (TargetDomain: %s)", cfg.DNS.TargetDomain)
+	}
 
 	return client, nil
 }
 
-// keepAlive mengirim request keepalive berkala. Jika server tidak membalas
-// dalam keepaliveTimeout, client ditutup. Penutupan itu membuat client.Wait()
-// kembali, sehingga sesi dinyatakan putus.
+// keepAlive mengirim request keepalive berkala secara tertata tanpa leaking goroutine.
 func keepAlive(client *gossh.Client) {
 	ticker := time.NewTicker(keepaliveInterval)
 	defer ticker.Stop()
 
+	fails := 0
+
 	for range ticker.C {
-		result := make(chan error, 1)
+		type pingResult struct {
+			err error
+		}
+
+		ch := make(chan pingResult, 1)
 		go func() {
 			_, _, err := client.SendRequest("keepalive@openssh.com", true, nil)
-			result <- err
+			ch <- pingResult{err: err}
 		}()
 
 		select {
-		case err := <-result:
-			if err != nil {
-				// Koneksi sudah tertutup dari luar, atau rusak.
-				return
+		case res := <-ch:
+			if res.err != nil {
+				fails++
+				debug.Printf("[SSH DEBUG] Keepalive ping error (%d/%d): %v", fails, maxKeepaliveFails, res.err)
+			} else {
+				fails = 0 // Reset hitungan jika berhasil menerima balasan
 			}
 		case <-time.After(keepaliveTimeout):
+			fails++
+			debug.Printf("[SSH DEBUG] Keepalive ping timeout (%d/%d)", fails, maxKeepaliveFails)
+		}
+
+		if fails >= maxKeepaliveFails {
+			debug.Printf("[SSH DEBUG] Memutus koneksi SSH karena %d kali keepalive gagal berturut-turut", fails)
 			_ = client.Close()
-			_ = errKeepaliveTimeout
 			return
 		}
 	}

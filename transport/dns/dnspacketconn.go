@@ -22,12 +22,17 @@ const (
 	numPaddingForPoll = 8
 
 	initPollDelay       = 500 * time.Millisecond
-	maxPollDelay        = 10 * time.Second
+	maxPollDelay        = 30 * time.Second
 	pollDelayMultiplier = 2.0
 
 	pollLimit = 16
 
 	rrTypeNULL uint16 = 10
+
+	// REVISI: Dinaikkan dari 40ms ke 60ms untuk mencegah penumpukan query beruntun (query flooding)
+	// saat latensi jaringan atau RTO resolver mengalami spike.
+	// minSendInterval = 60 * time.Millisecond
+	minSendInterval = 25 * time.Millisecond
 )
 
 var base32Encoding = base32.StdEncoding.WithPadding(base32.NoPadding)
@@ -40,6 +45,7 @@ type DNSPacketConn struct {
 	qtype    uint16
 	pollChan chan struct{}
 	*turbotunnel.QueuePacketConn
+	lastSend time.Time
 }
 
 func NewDNSPacketConn(transport net.PacketConn, addr net.Addr, domain dnstt.Name, queryType string) *DNSPacketConn {
@@ -238,6 +244,11 @@ func (c *DNSPacketConn) send(transport net.PacketConn, p []byte, addr net.Addr) 
 		return err
 	}
 
+	if d := minSendInterval - time.Since(c.lastSend); d > 0 {
+		time.Sleep(d)
+	}
+	c.lastSend = time.Now()
+
 	_, err = transport.WriteTo(buf, addr)
 	if err != nil {
 		debug.Printf("[SLOWDNS DEBUG] Kirim query gagal: %v", err)
@@ -250,6 +261,8 @@ func (c *DNSPacketConn) send(transport net.PacketConn, p []byte, addr net.Addr) 
 func (c *DNSPacketConn) sendLoop(transport net.PacketConn, addr net.Addr) error {
 	pollDelay := initPollDelay
 	pollTimer := time.NewTimer(pollDelay)
+	defer pollTimer.Stop()
+
 	for {
 		var p []byte
 		outgoing := c.QueuePacketConn.OutgoingQueue(addr)
@@ -279,8 +292,13 @@ func (c *DNSPacketConn) sendLoop(transport net.PacketConn, addr net.Addr) error 
 				pollDelay = maxPollDelay
 			}
 		} else {
+			// REVISI: Perbaikan penanganan pembersihan (drain) channel timer.
+			// Menggunakan non-blocking select untuk mencegah deadlock jika pollTimer.C belum terbaca.
 			if !pollTimer.Stop() {
-				<-pollTimer.C
+				select {
+				case <-pollTimer.C:
+				default:
+				}
 			}
 			pollDelay = initPollDelay
 		}
@@ -288,6 +306,13 @@ func (c *DNSPacketConn) sendLoop(transport net.PacketConn, addr net.Addr) error 
 
 		if err := c.send(transport, p, addr); err != nil {
 			debug.Printf("[SLOWDNS DEBUG] send: %v", err)
+		}
+
+		// REVISI: Pembersihan (drain) sinyal pollChan ekstra yang menumpuk setelah pengiriman query.
+		// Mencegah loop langsung mengeksekusi query berturut-turut tanpa jeda saat downstream ramai.
+		select {
+		case <-c.pollChan:
+		default:
 		}
 	}
 }
