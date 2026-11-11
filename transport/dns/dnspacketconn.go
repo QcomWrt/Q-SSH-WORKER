@@ -30,7 +30,7 @@ const (
 	rrTypeNULL uint16 = 10
 
 	// minSendInterval membatasi laju query (sekitar 40 query/detik).
-	minSendInterval = 25 * time.Millisecond
+	minSendInterval = 5 * time.Millisecond
 )
 
 var base32Encoding = base32.StdEncoding.WithPadding(base32.NoPadding)
