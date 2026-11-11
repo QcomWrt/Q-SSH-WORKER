@@ -245,7 +245,7 @@ func (c *streamConn) Read(b []byte) (int, error)  { return c.stream.Read(b) }
 func (c *streamConn) Write(b []byte) (int, error) { return c.stream.Write(b) }
 
 func (c *streamConn) Close() error {
-	qdebug.Printf("[SLOWDNS DEBUG] streamConn.Close dipanggil")
+	// qdebug.Printf("[SLOWDNS DEBUG] streamConn.Close dipanggil")
 	c.stream.Close()
 	c.sess.Close()
 	c.kcpConn.Close()

@@ -22,16 +22,14 @@ const (
 	numPaddingForPoll = 8
 
 	initPollDelay       = 500 * time.Millisecond
-	maxPollDelay        = 30 * time.Second
+	maxPollDelay        = 10 * time.Second
 	pollDelayMultiplier = 2.0
 
 	pollLimit = 16
 
 	rrTypeNULL uint16 = 10
 
-	// REVISI: Dinaikkan dari 40ms ke 60ms untuk mencegah penumpukan query beruntun (query flooding)
-	// saat latensi jaringan atau RTO resolver mengalami spike.
-	// minSendInterval = 60 * time.Millisecond
+	// minSendInterval membatasi laju query (sekitar 40 query/detik).
 	minSendInterval = 25 * time.Millisecond
 )
 
@@ -127,18 +125,18 @@ func (c *DNSPacketConn) recvLoop(transport net.PacketConn) error {
 		if err != nil {
 			return err
 		}
-		debug.Printf("[SLOWDNS DEBUG] Terima %d bytes dari %v", n, addr)
 
 		resp, err := dnstt.MessageFromWireFormat(buf[:n])
 		if err != nil {
-			debug.Printf("[SLOWDNS DEBUG] Balasan tidak bisa di-parse: %v", err)
 			continue
 		}
 
 		payload := dnsResponsePayload(&resp, c.domain)
 		if payload == nil {
-			debug.Printf("[SLOWDNS DEBUG] Balasan tanpa payload valid: rcode=%d answers=%d type=%v",
-				resp.Flags&0x000f, len(resp.Answer), typeOf(resp))
+			// Hanya laporkan rcode error, balasan kosong (poll) diabaikan.
+			if rcode := resp.Flags & 0x000f; rcode != dnstt.RcodeNoError {
+				debug.Printf("[SLOWDNS DEBUG] balasan rcode=%d", rcode)
+			}
 			continue
 		}
 
@@ -150,7 +148,6 @@ func (c *DNSPacketConn) recvLoop(transport net.PacketConn) error {
 				break
 			}
 			found = true
-			debug.Printf("[SLOWDNS DEBUG] Paket downstream %d bytes", len(p))
 			c.QueuePacketConn.QueueIncoming(p, addr)
 		}
 
@@ -161,14 +158,6 @@ func (c *DNSPacketConn) recvLoop(transport net.PacketConn) error {
 			}
 		}
 	}
-}
-
-// typeOf mengembalikan tipe RR pertama balasan, untuk log saja.
-func typeOf(resp dnstt.Message) uint16 {
-	if len(resp.Answer) > 0 {
-		return uint16(resp.Answer[0].Type)
-	}
-	return 0
 }
 
 func chunks(p []byte, n int) [][]byte {
@@ -188,6 +177,11 @@ func (c *DNSPacketConn) send(transport net.PacketConn, p []byte, addr net.Addr) 
 	if len(p) >= 224 {
 		return fmt.Errorf("paket terlalu panjang: %d", len(p))
 	}
+
+	if d := minSendInterval - time.Since(c.lastSend); d > 0 {
+		time.Sleep(d)
+	}
+	c.lastSend = time.Now()
 
 	var decoded []byte
 	{
@@ -244,25 +238,17 @@ func (c *DNSPacketConn) send(transport net.PacketConn, p []byte, addr net.Addr) 
 		return err
 	}
 
-	if d := minSendInterval - time.Since(c.lastSend); d > 0 {
-		time.Sleep(d)
-	}
-	c.lastSend = time.Now()
-
 	_, err = transport.WriteTo(buf, addr)
 	if err != nil {
-		debug.Printf("[SLOWDNS DEBUG] Kirim query gagal: %v", err)
+		debug.Printf("[SLOWDNS DEBUG] kirim query gagal: %v", err)
 		return err
 	}
-	debug.Printf("[SLOWDNS DEBUG] Kirim query %d bytes (type=%d)", len(buf), c.qtype)
 	return nil
 }
 
 func (c *DNSPacketConn) sendLoop(transport net.PacketConn, addr net.Addr) error {
 	pollDelay := initPollDelay
 	pollTimer := time.NewTimer(pollDelay)
-	defer pollTimer.Stop()
-
 	for {
 		var p []byte
 		outgoing := c.QueuePacketConn.OutgoingQueue(addr)
@@ -292,13 +278,8 @@ func (c *DNSPacketConn) sendLoop(transport net.PacketConn, addr net.Addr) error 
 				pollDelay = maxPollDelay
 			}
 		} else {
-			// REVISI: Perbaikan penanganan pembersihan (drain) channel timer.
-			// Menggunakan non-blocking select untuk mencegah deadlock jika pollTimer.C belum terbaca.
 			if !pollTimer.Stop() {
-				select {
-				case <-pollTimer.C:
-				default:
-				}
+				<-pollTimer.C
 			}
 			pollDelay = initPollDelay
 		}
@@ -306,13 +287,6 @@ func (c *DNSPacketConn) sendLoop(transport net.PacketConn, addr net.Addr) error 
 
 		if err := c.send(transport, p, addr); err != nil {
 			debug.Printf("[SLOWDNS DEBUG] send: %v", err)
-		}
-
-		// REVISI: Pembersihan (drain) sinyal pollChan ekstra yang menumpuk setelah pengiriman query.
-		// Mencegah loop langsung mengeksekusi query berturut-turut tanpa jeda saat downstream ramai.
-		select {
-		case <-c.pollChan:
-		default:
 		}
 	}
 }
