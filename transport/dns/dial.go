@@ -180,16 +180,16 @@ func configureKCP(c *kcp.UDPSession, mtu int) error {
 
 	// OPTIMASI JARINGAN SELULER:
 	// - nodelay = 1 (aktifkan mode fast retransmit)
-	// - interval = 20ms (update clock KCP cepat)
+	// - interval = 10ms (update clock KCP cepat)
 	// - resend = 2 (trigger fast retransmit setelah 2x duplicate ACK)
 	// - nc = 1 (non-congestion control agar throughput stabil)
-	c.SetNoDelay(1, 20, 2, 1)
+	c.SetNoDelay(1, 10, 2, 1)
 
 	// REKOMENDASI TAHAN BANTING SELULER:
 	// - Send Window (32): Melindungi resolver DNS dari rate-limiting query upstream.
 	// - Receive Window (128): Menampung jitter & paket out-of-order akibat latensi seluler yang melompat.
-	c.SetWindowSize(32, 128)
-	// c.SetWindowSize(64, 256)
+	c.SetWindowSize(64, 128)
+	// c.SetWindowSize(64, 512)
 
 	// Batasi MTU maksimal 470 byte untuk mencegah fragmentasi paket IP di BTS seluler.
 	if mtu > 470 {

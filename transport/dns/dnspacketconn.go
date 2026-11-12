@@ -10,6 +10,7 @@ import (
 	"net"
 	"strings"
 	"time"
+	"sync/atomic"
 
 	dnstt "github.com/QcomWrt/Q-SSH-WORKER/transport/dns/internal/dns"
 	turbotunnel "github.com/QcomWrt/Q-SSH-WORKER/transport/dns/internal/turbotunnel"
@@ -21,29 +22,35 @@ const (
 	numPadding        = 3
 	numPaddingForPoll = 8
 
-	initPollDelay       = 500 * time.Millisecond
-	maxPollDelay        = 10 * time.Second
-	pollDelayMultiplier = 2.0
+	initPollDelay       = 10 * time.Millisecond
+	maxPollDelay        = 3 * time.Second
+	pollDelayMultiplier = 1.5
 
-	pollLimit = 16
+	pollLimit = 256
 
 	rrTypeNULL uint16 = 10
 
-	// minSendInterval membatasi laju query (sekitar 40 query/detik).
-	minSendInterval = 5 * time.Millisecond
+	// INTERVAL DINAMIS AGRESIS:
+	// - minSendIntervalActive (1ms): Mengizinkan hingga ~1000 query/detik saat download kencang
+	// - minSendIntervalIdle (15ms): Sangat hemat CPU/baterai saat idle
+	minSendIntervalActive = 1 * time.Millisecond
+	minSendIntervalIdle   = 15 * time.Millisecond
+
+	// Batas waktu untuk menganggap koneksi masih dalam kondisi "aktif"
+	activeTimeout = 600 * time.Millisecond
 )
 
-var base32Encoding = base32.StdEncoding.WithPadding(base32.NoPadding)
+// Gunakan encoder base32 huruf kecil langsung agar tidak memanggil bytes.ToLower() setiap paket
+var lowerBase32Encoding = base32.NewEncoding("abcdefghijklmnopqrstuvwxyz234567").WithPadding(base32.NoPadding)
 
-// DNSPacketConn menyediakan kirim dan terima paket di atas DNS.
-// queryType menentukan tipe record query: "NULL" atau "TXT" (default TXT).
 type DNSPacketConn struct {
 	clientID turbotunnel.ClientID
 	domain   dnstt.Name
 	qtype    uint16
 	pollChan chan struct{}
 	*turbotunnel.QueuePacketConn
-	lastSend time.Time
+	lastSend     time.Time
+	lastDataRecv atomic.Int64 // UnixNano
 }
 
 func NewDNSPacketConn(transport net.PacketConn, addr net.Addr, domain dnstt.Name, queryType string) *DNSPacketConn {
@@ -74,7 +81,6 @@ func NewDNSPacketConn(transport net.PacketConn, addr net.Addr, domain dnstt.Name
 }
 
 // dnsResponsePayload mengambil payload downstream dari balasan.
-// TXT: string digabung dan didekode. NULL: data mentah di RDATA.
 func dnsResponsePayload(resp *dnstt.Message, domain dnstt.Name) []byte {
 	if resp.Flags&0x8000 != 0x8000 {
 		return nil
@@ -133,7 +139,6 @@ func (c *DNSPacketConn) recvLoop(transport net.PacketConn) error {
 
 		payload := dnsResponsePayload(&resp, c.domain)
 		if payload == nil {
-			// Hanya laporkan rcode error, balasan kosong (poll) diabaikan.
 			if rcode := resp.Flags & 0x000f; rcode != dnstt.RcodeNoError {
 				debug.Printf("[SLOWDNS DEBUG] balasan rcode=%d", rcode)
 			}
@@ -152,6 +157,7 @@ func (c *DNSPacketConn) recvLoop(transport net.PacketConn) error {
 		}
 
 		if found {
+			c.lastDataRecv.Store(time.Now().UnixNano())
 			select {
 			case c.pollChan <- struct{}{}:
 			default:
@@ -178,31 +184,44 @@ func (c *DNSPacketConn) send(transport net.PacketConn, p []byte, addr net.Addr) 
 		return fmt.Errorf("paket terlalu panjang: %d", len(p))
 	}
 
-	if d := minSendInterval - time.Since(c.lastSend); d > 0 {
+	// HITUNG INTERVAL DINAMIS:
+	interval := minSendIntervalIdle
+	if len(p) > 0 || time.Since(time.Unix(0, c.lastDataRecv.Load())) < activeTimeout {
+		interval = minSendIntervalActive
+	}
+
+	if d := interval - time.Since(c.lastSend); d > 0 {
 		time.Sleep(d)
 	}
 	c.lastSend = time.Now()
 
-	var decoded []byte
-	{
-		var buf bytes.Buffer
-		buf.Write(c.clientID[:])
-		n := numPadding
-		if len(p) == 0 {
-			n = numPaddingForPoll
-		}
-		buf.WriteByte(byte(224 + n))
-		io.CopyN(&buf, rand.Reader, int64(n))
-		if len(p) > 0 {
-			buf.WriteByte(byte(len(p)))
-			buf.Write(p)
-		}
-		decoded = buf.Bytes()
+	// 1. Buat buffer payload tanpa rand.Reader overhead berlebih
+	var decodedBuf [256]byte
+	nPad := numPadding
+	if len(p) == 0 {
+		nPad = numPaddingForPoll
 	}
 
-	encoded := make([]byte, base32Encoding.EncodedLen(len(decoded)))
-	base32Encoding.Encode(encoded, decoded)
-	encoded = bytes.ToLower(encoded)
+	copy(decodedBuf[:8], c.clientID[:])
+	decodedBuf[8] = byte(224 + nPad)
+	
+	// Fast random padding generator tanpa io.CopyN heap allocation
+	_, _ = rand.Read(decodedBuf[9 : 9+nPad])
+
+	offset := 9 + nPad
+	if len(p) > 0 {
+		decodedBuf[offset] = byte(len(p))
+		copy(decodedBuf[offset+1:], p)
+		offset += 1 + len(p)
+	}
+
+	decoded := decodedBuf[:offset]
+
+	// 2. Encode langsung menggunakan lowerBase32Encoding (bebas bytes.ToLower)
+	encodedLen := lowerBase32Encoding.EncodedLen(len(decoded))
+	var encodedBuf [512]byte
+	lowerBase32Encoding.Encode(encodedBuf[:encodedLen], decoded)
+	encoded := encodedBuf[:encodedLen]
 
 	labels := chunks(encoded, 63)
 	labels = append(labels, c.domain...)
@@ -279,7 +298,10 @@ func (c *DNSPacketConn) sendLoop(transport net.PacketConn, addr net.Addr) error 
 			}
 		} else {
 			if !pollTimer.Stop() {
-				<-pollTimer.C
+				select {
+				case <-pollTimer.C:
+				default:
+				}
 			}
 			pollDelay = initPollDelay
 		}
