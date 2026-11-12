@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	gossh "golang.org/x/crypto/ssh"
+	qdebug "github.com/QcomWrt/Q-SSH-WORKER/debug"
 )
 
 // HandleRequest mempertahankan API lama untuk kompatibilitas OpenWrt.
@@ -159,6 +160,7 @@ func HandleRequestContext(
 	// --------------------------------------------------
 	sshConn, err := sshClient.Dial("tcp", targetAddr)
 	if err != nil {
+		qdebug.Printf("[SOCKS DEBUG] ssh dial %s gagal: %v", targetAddr, err)
 		if ctx.Err() != nil {
 			return
 		}
